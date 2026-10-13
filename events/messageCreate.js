@@ -36,53 +36,40 @@ module.exports = {
 
     processingUsers.add(key);
 
-    // Snapshot the burst so new messages cannot change this deletion batch.
     const burst = [...recent];
     userMessages.delete(key);
 
     try {
       const messages = burst.map(entry => entry.message);
       let deletedCount = 0;
+      const deletedIds = new Set();
 
-      // Try bulk deletion first.
+      // Bulk-delete the captured spam burst.
       if (messages.length >= 2) {
         try {
           const deleted = await message.channel.bulkDelete(messages, true);
           deletedCount = deleted.size;
-        } catch (error) {
-          console.error('Bulk deletion failed; trying individual deletions:', error.message);
-        }
-      }
 
-      // Individually retry messages not confirmed as deleted.
-      const confirmedIds = new Set();
-
-      if (deletedCount > 0) {
-        // Check which messages remain before retrying.
-        try {
-          const remaining = await message.channel.messages.fetch({
-            limit: 100,
-          });
-
-          for (const msg of remaining.values()) {
-            confirmedIds.add(msg.id);
+          for (const deletedMessage of deleted.values()) {
+            deletedIds.add(deletedMessage.id);
           }
         } catch (error) {
-          console.error('Could not check remaining messages:', error.message);
+          console.error('Bulk deletion failed:', error.message);
         }
       }
 
-      for (const msg of messages) {
-        if (msg.id === message.id && !msg.deletable) continue;
-
-        // If the fetch succeeded and the message is absent, assume it was deleted.
-        if (confirmedIds.size > 0 && !confirmedIds.has(msg.id)) continue;
-
-        try {
-          await msg.delete();
-          deletedCount++;
-        } catch (error) {
-          console.error(`Could not delete message ${msg.id}:`, error.message);
+      // Only try individual deletion if the bulk request failed.
+      if (deletedIds.size === 0) {
+        for (const msg of messages) {
+          try {
+            await msg.delete();
+            deletedCount++;
+          } catch (error) {
+            // A message may already have been deleted.
+            if (error.code !== 10008) {
+              console.error(`Could not delete message ${msg.id}:`, error.message);
+            }
+          }
         }
       }
 
