@@ -1,5 +1,10 @@
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  MessageFlags,
+} = require('discord.js');
 
-const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
+const { sendModLog } = require('../utils/modLog');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -27,6 +32,15 @@ module.exports = {
 
     try {
       const deleted = await interaction.channel.bulkDelete(amount, true);
+
+      await sendModLog(interaction.guild, {
+        title: 'Messages Cleared',
+        description:
+          `**Moderator:** ${interaction.user.tag} (${interaction.user.id})\n` +
+          `**Channel:** ${interaction.channel}\n` +
+          `**Messages deleted:** ${deleted.size}\n` +
+          `**Requested:** ${amount}`,
+      });
 
       await interaction.reply({
         content: `Deleted ${deleted.size} message(s). Messages older than 14 days cannot be bulk deleted.`,
