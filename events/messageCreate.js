@@ -12,83 +12,107 @@ module.exports = {
   name: Events.MessageCreate,
 
   async execute(message) {
+    if (!message.guild || message.author.bot || !message.member) return;
+
+    const member = message.member;
+
+    if (
+      member.permissions.has(PermissionFlagsBits.Administrator) ||
+      member.permissions.has(PermissionFlagsBits.ManageMessages)
+    ) {
+      return;
+    }
+
+    const key = `${message.guild.id}:${message.author.id}`;
+    const now = Date.now();
+
+    const recent = (userMessages.get(key) || [])
+      .filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
+
+    recent.push({ timestamp: now, message });
+    userMessages.set(key, recent);
+
+    if (recent.length < SPAM_LIMIT || processingUsers.has(key)) return;
+
+    processingUsers.add(key);
+
+    // Snapshot the burst so new messages cannot change this deletion batch.
+    const burst = [...recent];
+    userMessages.delete(key);
+
     try {
-      if (!message.guild || message.author.bot || !message.member) return;
+      const messages = burst.map(entry => entry.message);
+      let deletedCount = 0;
 
-      const member = message.member;
-
-      if (
-        member.permissions.has(PermissionFlagsBits.Administrator) ||
-        member.permissions.has(PermissionFlagsBits.ManageMessages)
-      ) {
-        return;
+      // Try bulk deletion first.
+      if (messages.length >= 2) {
+        try {
+          const deleted = await message.channel.bulkDelete(messages, true);
+          deletedCount = deleted.size;
+        } catch (error) {
+          console.error('Bulk deletion failed; trying individual deletions:', error.message);
+        }
       }
 
-      const now = Date.now();
-      const key = `${message.guild.id}:${message.author.id}`;
+      // Individually retry messages not confirmed as deleted.
+      const confirmedIds = new Set();
 
-      const recentMessages = (userMessages.get(key) || [])
-        .filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
+      if (deletedCount > 0) {
+        // Check which messages remain before retrying.
+        try {
+          const remaining = await message.channel.messages.fetch({
+            limit: 100,
+          });
 
-      recentMessages.push({
-        timestamp: now,
-        message,
-      });
-
-      userMessages.set(key, recentMessages);
-
-      if (recentMessages.length < SPAM_LIMIT) return;
-      if (processingUsers.has(key)) return;
-
-      processingUsers.add(key);
-
-      try {
-        const messagesToDelete = recentMessages
-          .map(entry => entry.message)
-          .filter(msg => msg.deletable);
-
-        let deletedCount = 0;
-
-        if (messagesToDelete.length > 1) {
-          try {
-            const deleted = await message.channel.bulkDelete(
-              messagesToDelete,
-              true
-            );
-            deletedCount = deleted.size;
-          } catch (error) {
-            console.error('Bulk spam deletion failed:', error);
+          for (const msg of remaining.values()) {
+            confirmedIds.add(msg.id);
           }
-        } else if (messagesToDelete.length === 1) {
-          try {
-            await messagesToDelete[0].delete();
-            deletedCount = 1;
-          } catch (error) {
-            console.error('Spam message deletion failed:', error);
-          }
+        } catch (error) {
+          console.error('Could not check remaining messages:', error.message);
         }
+      }
 
-        if (member.moderatable) {
+      for (const msg of messages) {
+        if (msg.id === message.id && !msg.deletable) continue;
+
+        // If the fetch succeeded and the message is absent, assume it was deleted.
+        if (confirmedIds.size > 0 && !confirmedIds.has(msg.id)) continue;
+
+        try {
+          await msg.delete();
+          deletedCount++;
+        } catch (error) {
+          console.error(`Could not delete message ${msg.id}:`, error.message);
+        }
+      }
+
+      let timeoutApplied = false;
+
+      if (member.moderatable) {
+        try {
           await member.timeout(
             TIMEOUT_MS,
             'Automatic anti-spam: excessive messages'
           );
+          timeoutApplied = true;
+        } catch (error) {
+          console.error('Could not apply anti-spam timeout:', error.message);
         }
-
-        await sendModLog(message.guild, {
-          title: 'Anti-Spam Triggered',
-          description:
-            `**Member:** ${message.author.tag} (${message.author.id})\n` +
-            `**Channel:** ${message.channel}\n` +
-            `**Messages deleted:** ${deletedCount}/${recentMessages.length}\n` +
-            `**Timeout:** ${member.moderatable ? '1 minute' : 'Not applied — member is not moderatable'}`,
-        });
-      } finally {
-        userMessages.delete(key);
-        processingUsers.delete(key);
       }
+
+      await sendModLog(message.guild, {
+        title: 'Anti-Spam Triggered',
+        description:
+          `**Member:** ${message.author.tag} (${message.author.id})\n` +
+          `**Channel:** ${message.channel}\n` +
+          `**Messages in burst:** ${messages.length}\n` +
+          `**Messages deleted:** ${deletedCount}\n` +
+          `**Timeout:** ${timeoutApplied ? '1 minute' : 'Not applied'}`,
+      });
     } catch (error) {
       console.error('Error in anti-spam event:', error);
+    } finally {
+      processingUsers.delete(key);
     }
   },
 };
