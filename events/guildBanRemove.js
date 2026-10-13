@@ -1,11 +1,15 @@
 const { Events } = require('discord.js');
 const { sendModLog } = require('../utils/modLog');
+const { wait } = require('../utils/checks');
 
 module.exports = {
   name: Events.GuildBanRemove,
 
   async execute(ban) {
     try {
+      // Give Discord a moment to write its audit log entry.
+      await wait(1000);
+
       const auditLogs = await ban.guild.fetchAuditLogs({
         type: 23,
         limit: 5,
@@ -18,6 +22,9 @@ module.exports = {
 
       // Skip logging if no likely matching audit entry is found.
       if (!entry) return;
+
+      // If this bot did it, the command already logged it.
+      if (entry.executor?.id === ban.client.user.id) return;
 
       await sendModLog(ban.guild, {
         title: 'Member Unbanned (Discord)',
