@@ -5,6 +5,8 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+const { sendModLog } = require('../utils/modLog');
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('timeout')
@@ -64,6 +66,15 @@ module.exports = {
         duration * 60 * 1000,
         `${reason} | Moderator: ${interaction.user.tag}`
       );
+
+      await sendModLog(interaction.guild, {
+        title: 'Member Timed Out',
+        description:
+          `**Member:** ${user.tag} (${user.id})\n` +
+          `**Moderator:** ${interaction.user.tag}\n` +
+          `**Duration:** ${duration} minute(s)\n` +
+          `**Reason:** ${reason}`,
+      });
 
       await interaction.editReply(
         `Successfully timed out **${user.tag}** for **${duration} minute(s)**.\nReason: ${reason}`
