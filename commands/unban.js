@@ -5,6 +5,8 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+const { sendModLog } = require('../utils/modLog');
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('unban')
@@ -63,6 +65,14 @@ module.exports = {
         userId,
         `${reason} | Moderator: ${interaction.user.tag}`
       );
+
+      await sendModLog(interaction.guild, {
+        title: 'Member Unbanned',
+        description:
+          `**Member:** ${ban.user.tag} (${ban.user.id})\n` +
+          `**Moderator:** ${interaction.user.tag}\n` +
+          `**Reason:** ${reason}`,
+      });
 
       await interaction.editReply(
         `Successfully unbanned **${ban.user.tag}**.\nReason: ${reason}\nThey can now rejoin using a valid server invite.`
