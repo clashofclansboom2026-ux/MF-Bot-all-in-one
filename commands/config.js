@@ -112,7 +112,7 @@ module.exports = {
           `Messages required: ${messages}\n` +
           `Detection window: ${windowSeconds} seconds\n` +
           `Timeout duration: ${timeoutMinutes} minute(s)\n\n` +
-          'These settings will take effect once the anti-spam event is updated to read them.',
+          'These settings take effect straight away.',
         flags: MessageFlags.Ephemeral,
       });
     }
