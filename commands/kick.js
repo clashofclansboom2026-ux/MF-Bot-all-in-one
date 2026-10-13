@@ -5,6 +5,8 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+const { sendModLog } = require('../utils/modLog');
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('kick')
@@ -54,6 +56,14 @@ module.exports = {
       await member.kick(
         `${reason} | Moderator: ${interaction.user.tag}`
       );
+
+      await sendModLog(interaction.guild, {
+        title: 'Member Kicked',
+        description:
+          `**Member:** ${user.tag} (${user.id})\n` +
+          `**Moderator:** ${interaction.user.tag}\n` +
+          `**Reason:** ${reason}`,
+      });
 
       await interaction.editReply(
         `Successfully kicked **${user.tag}**.\nReason: ${reason}`
