@@ -1,6 +1,6 @@
 // index.js - the main file of your bot.
-// It logs in, loads every file in the "commands" folder, and runs them.
-// To add a new command later, you only add a new file in "commands".
+// It logs in, loads every file in the "commands" and "events" folders, and runs them.
+// To add a new command or event later, you only add a new file.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -20,7 +20,10 @@ if (!token) {
 }
 
 // "Intents" tell Discord what the bot wants to hear about.
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Guilds = slash commands. GuildMembers = hear when someone joins the server.
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
 
 // Load every command file from the "commands" folder.
 client.commands = new Collection();
@@ -34,6 +37,28 @@ for (const file of commandFiles) {
   } else {
     console.warn(`Skipped ${file}: it needs both "data" and "execute".`);
   }
+}
+
+// Load every event file from the "events" folder.
+// An event is something the bot reacts to, like "a new member joined".
+const eventsPath = path.join(__dirname, 'events');
+if (fs.existsSync(eventsPath)) {
+  const eventFiles = fs.readdirSync(eventsPath).filter((f) => f.endsWith('.js'));
+  for (const file of eventFiles) {
+    const event = require(path.join(eventsPath, file));
+    if (!('name' in event) || !('execute' in event)) {
+      console.warn(`Skipped ${file}: it needs both "name" and "execute".`);
+      continue;
+    }
+    client.on(event.name, async (...args) => {
+      try {
+        await event.execute(...args);
+      } catch (error) {
+        console.error(`Error in event ${event.name}:`, error);
+      }
+    });
+  }
+  console.log(`Loaded ${eventFiles.length} event file(s).`);
 }
 
 // Runs once when the bot has logged in.
