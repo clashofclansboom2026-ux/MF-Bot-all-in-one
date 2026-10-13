@@ -1,5 +1,10 @@
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  MessageFlags,
+  ChannelType,
+} = require('discord.js');
 
-const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, ChannelType } = require('discord.js');
 const { getGuildConfig, setGuildConfig } = require('../utils/configStore');
 
 module.exports = {
@@ -7,6 +12,7 @@ module.exports = {
     .setName('config')
     .setDescription('Configure this server’s bot settings')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+
     .addSubcommand(subcommand =>
       subcommand
         .setName('logs')
@@ -14,8 +20,38 @@ module.exports = {
         .addChannelOption(option =>
           option
             .setName('channel')
-            .setDescription('Mention or select the channel for moderation logs')
+            .setDescription('Channel for moderation logs')
             .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true)
+        )
+    )
+
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('antispam')
+        .setDescription('Configure automatic anti-spam')
+        .addIntegerOption(option =>
+          option
+            .setName('messages')
+            .setDescription('Messages needed to trigger anti-spam (2–10)')
+            .setMinValue(2)
+            .setMaxValue(10)
+            .setRequired(true)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('window')
+            .setDescription('Detection window in seconds (3–30)')
+            .setMinValue(3)
+            .setMaxValue(30)
+            .setRequired(true)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('timeout')
+            .setDescription('Timeout duration in minutes (1–1440)')
+            .setMinValue(1)
+            .setMaxValue(1440)
             .setRequired(true)
         )
     ),
@@ -53,6 +89,30 @@ module.exports = {
 
       return interaction.reply({
         content: `Moderation logs will be sent to ${channel}.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    if (subcommand === 'antispam') {
+      const messages = interaction.options.getInteger('messages', true);
+      const windowSeconds = interaction.options.getInteger('window', true);
+      const timeoutMinutes = interaction.options.getInteger('timeout', true);
+
+      setGuildConfig(interaction.guildId, {
+        antiSpam: {
+          messages,
+          windowMs: windowSeconds * 1000,
+          timeoutMs: timeoutMinutes * 60 * 1000,
+        },
+      });
+
+      return interaction.reply({
+        content:
+          '**Anti-spam settings saved for this server.**\n' +
+          `Messages required: ${messages}\n` +
+          `Detection window: ${windowSeconds} seconds\n` +
+          `Timeout duration: ${timeoutMinutes} minute(s)\n\n` +
+          'These settings will take effect once the anti-spam event is updated to read them.',
         flags: MessageFlags.Ephemeral,
       });
     }
