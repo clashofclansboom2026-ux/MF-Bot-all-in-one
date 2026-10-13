@@ -5,6 +5,8 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+const { sendModLog } = require('../utils/modLog');
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('untimeout')
@@ -48,7 +50,18 @@ module.exports = {
         );
       }
 
-      await member.timeout(null, `Timeout removed by ${interaction.user.tag}`);
+      await member.timeout(
+        null,
+        `Timeout removed by ${interaction.user.tag}`
+      );
+
+      await sendModLog(interaction.guild, {
+        title: 'Member Timeout Removed',
+        description:
+          `**Member:** ${user.tag} (${user.id})\n` +
+          `**Moderator:** ${interaction.user.tag}\n` +
+          `**Reason:** Timeout removed by moderator`,
+      });
 
       await interaction.editReply(
         `Successfully removed the timeout from **${user.tag}**.`
