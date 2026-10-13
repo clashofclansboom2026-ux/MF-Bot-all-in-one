@@ -5,6 +5,8 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+const { sendModLog } = require('../utils/modLog');
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('ban')
@@ -65,6 +67,15 @@ module.exports = {
       await interaction.guild.members.ban(user.id, {
         reason: `${reason} | Moderator: ${interaction.user.tag}`,
         deleteMessageSeconds: deleteDays * 24 * 60 * 60,
+      });
+
+      await sendModLog(interaction.guild, {
+        title: 'Member Banned',
+        description:
+          `**Member:** ${user.tag} (${user.id})\n` +
+          `**Moderator:** ${interaction.user.tag}\n` +
+          `**Reason:** ${reason}\n` +
+          `**Recent message history deleted:** ${deleteDays} day(s)`,
       });
 
       await interaction.editReply(
