@@ -6,19 +6,17 @@ const SPAM_WINDOW_MS = 5000;
 const TIMEOUT_MS = 60 * 1000;
 
 const userMessages = new Map();
-const timedOutUsers = new Set();
+const processingUsers = new Set();
 
 module.exports = {
   name: Events.MessageCreate,
 
   async execute(message) {
     try {
-      if (!message.guild || message.author.bot) return;
+      if (!message.guild || message.author.bot || !message.member) return;
 
       const member = message.member;
-      if (!member) return;
 
-      // Exempt administrators and moderators with Manage Messages.
       if (
         member.permissions.has(PermissionFlagsBits.Administrator) ||
         member.permissions.has(PermissionFlagsBits.ManageMessages)
@@ -29,7 +27,6 @@ module.exports = {
       const now = Date.now();
       const key = `${message.guild.id}:${message.author.id}`;
 
-      // Keep the actual message objects, not just timestamps.
       const recentMessages = (userMessages.get(key) || [])
         .filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
 
@@ -40,53 +37,55 @@ module.exports = {
 
       userMessages.set(key, recentMessages);
 
-      // Trigger when a member sends 5 messages within 5 seconds.
       if (recentMessages.length < SPAM_LIMIT) return;
+      if (processingUsers.has(key)) return;
 
-      // Prevent duplicate moderation attempts while processing.
-      if (timedOutUsers.has(key)) return;
-      timedOutUsers.add(key);
+      processingUsers.add(key);
 
       try {
-        // Attempt to delete every message in the detected spam burst.
-        const deletions = await Promise.allSettled(
-          recentMessages.map(entry => entry.message.delete())
-        );
+        const messagesToDelete = recentMessages
+          .map(entry => entry.message)
+          .filter(msg => msg.deletable);
 
-        const deletedCount = deletions.filter(
-          result => result.status === 'fulfilled'
-        ).length;
+        let deletedCount = 0;
 
-        if (!member.moderatable) {
-          await sendModLog(message.guild, {
-            title: 'Anti-Spam: Messages Deleted',
-            description:
-              `**Member:** ${message.author.tag} (${message.author.id})\n` +
-              `**Channel:** ${message.channel}\n` +
-              `**Messages deleted:** ${deletedCount}/${recentMessages.length}\n` +
-              '**Timeout:** Not applied — member is not moderatable',
-          });
-
-          return;
+        if (messagesToDelete.length > 1) {
+          try {
+            const deleted = await message.channel.bulkDelete(
+              messagesToDelete,
+              true
+            );
+            deletedCount = deleted.size;
+          } catch (error) {
+            console.error('Bulk spam deletion failed:', error);
+          }
+        } else if (messagesToDelete.length === 1) {
+          try {
+            await messagesToDelete[0].delete();
+            deletedCount = 1;
+          } catch (error) {
+            console.error('Spam message deletion failed:', error);
+          }
         }
 
-        await member.timeout(
-          TIMEOUT_MS,
-          'Automatic anti-spam: excessive messages'
-        );
+        if (member.moderatable) {
+          await member.timeout(
+            TIMEOUT_MS,
+            'Automatic anti-spam: excessive messages'
+          );
+        }
 
         await sendModLog(message.guild, {
-          title: 'Anti-Spam: Member Timed Out',
+          title: 'Anti-Spam Triggered',
           description:
             `**Member:** ${message.author.tag} (${message.author.id})\n` +
             `**Channel:** ${message.channel}\n` +
             `**Messages deleted:** ${deletedCount}/${recentMessages.length}\n` +
-            '**Duration:** 1 minute\n' +
-            '**Reason:** Sent too many messages within 5 seconds',
+            `**Timeout:** ${member.moderatable ? '1 minute' : 'Not applied — member is not moderatable'}`,
         });
       } finally {
         userMessages.delete(key);
-        timedOutUsers.delete(key);
+        processingUsers.delete(key);
       }
     } catch (error) {
       console.error('Error in anti-spam event:', error);
