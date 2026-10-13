@@ -29,24 +29,46 @@ module.exports = {
       const now = Date.now();
       const key = `${message.guild.id}:${message.author.id}`;
 
+      // Keep the actual message objects, not just timestamps.
       const recentMessages = (userMessages.get(key) || [])
-        .filter(timestamp => now - timestamp < SPAM_WINDOW_MS);
+        .filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
 
-      recentMessages.push(now);
+      recentMessages.push({
+        timestamp: now,
+        message,
+      });
+
       userMessages.set(key, recentMessages);
 
       // Trigger when a member sends 5 messages within 5 seconds.
       if (recentMessages.length < SPAM_LIMIT) return;
 
-      // Prevent repeated timeout attempts while this action is running.
+      // Prevent duplicate moderation attempts while processing.
       if (timedOutUsers.has(key)) return;
       timedOutUsers.add(key);
 
       try {
-        // Delete the messages that triggered the spam threshold.
-        await message.delete().catch(() => null);
+        // Attempt to delete every message in the detected spam burst.
+        const deletions = await Promise.allSettled(
+          recentMessages.map(entry => entry.message.delete())
+        );
 
-        if (!member.moderatable) return;
+        const deletedCount = deletions.filter(
+          result => result.status === 'fulfilled'
+        ).length;
+
+        if (!member.moderatable) {
+          await sendModLog(message.guild, {
+            title: 'Anti-Spam: Messages Deleted',
+            description:
+              `**Member:** ${message.author.tag} (${message.author.id})\n` +
+              `**Channel:** ${message.channel}\n` +
+              `**Messages deleted:** ${deletedCount}/${recentMessages.length}\n` +
+              '**Timeout:** Not applied — member is not moderatable',
+          });
+
+          return;
+        }
 
         await member.timeout(
           TIMEOUT_MS,
@@ -58,8 +80,9 @@ module.exports = {
           description:
             `**Member:** ${message.author.tag} (${message.author.id})\n` +
             `**Channel:** ${message.channel}\n` +
-            `**Duration:** 1 minute\n` +
-            `**Reason:** Sent ${recentMessages.length} messages within 5 seconds`,
+            `**Messages deleted:** ${deletedCount}/${recentMessages.length}\n` +
+            '**Duration:** 1 minute\n' +
+            '**Reason:** Sent too many messages within 5 seconds',
         });
       } finally {
         userMessages.delete(key);
