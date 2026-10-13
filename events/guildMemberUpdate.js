@@ -1,5 +1,6 @@
 const { Events } = require('discord.js');
 const { sendModLog } = require('../utils/modLog');
+const { wait } = require('../utils/checks');
 
 module.exports = {
   name: Events.GuildMemberUpdate,
@@ -11,6 +12,9 @@ module.exports = {
 
       // Only continue if the timeout status changed.
       if (wasTimedOut === isTimedOut) return;
+
+      // Give Discord a moment to write its audit log entry.
+      await wait(1000);
 
       const auditLogs = await newMember.guild.fetchAuditLogs({
         type: 24,
@@ -24,6 +28,9 @@ module.exports = {
 
       // Skip if no likely matching audit entry was found.
       if (!entry) return;
+
+      // If this bot did it (a command or anti-spam), it was already logged.
+      if (entry.executor?.id === newMember.client.user.id) return;
 
       await sendModLog(newMember.guild, {
         title: isTimedOut
