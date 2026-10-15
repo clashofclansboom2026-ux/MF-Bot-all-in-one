@@ -1,5 +1,12 @@
 
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+} = require('discord.js');
 const quests = require('../utils/quests');
 
 module.exports = {
@@ -22,19 +29,22 @@ module.exports = {
 
     const description = memberQuests.map((quest) => {
       const length = 10;
-      const filled = Math.round(
-        (quest.progress / quest.target) * length
+      const filled = Math.max(
+        0,
+        Math.min(
+          length,
+          Math.round((quest.progress / quest.target) * length)
+        )
       );
-      const bar = '▰'.repeat(filled) + '▱'.repeat(length - filled);
 
-      let status;
-      if (quest.claimed) {
-        status = '✅ Reward claimed';
-      } else if (quest.completed) {
-        status = '🏁 Completed — reward claiming coming soon';
-      } else {
-        status = '⏳ In progress';
-      }
+      const bar =
+        '▰'.repeat(filled) + '▱'.repeat(length - filled);
+
+      const status = quest.claimed
+        ? '✅ Reward claimed'
+        : quest.completed
+          ? '🏆 Ready to claim'
+          : '⏳ In progress';
 
       return [
         `**${quest.name}** (${quest.type})`,
@@ -47,11 +57,38 @@ module.exports = {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle('📜 Your Quests')
-      .setDescription(description)
+      .setDescription(
+        description || 'There are no quests available right now.'
+      )
       .setFooter({
         text: 'Daily quests reset each UTC day; weekly quests reset each Monday UTC.',
       });
 
-    await interaction.reply({ embeds: [embed] });
+    const buttons = memberQuests.map((quest) =>
+      new ButtonBuilder()
+        .setCustomId(`quest:claim:${quest.id}`)
+        .setLabel(
+          quest.claimed
+            ? `${quest.name} — Claimed`
+            : `Claim: ${quest.name}`
+        )
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(!quest.completed || quest.claimed)
+    );
+
+    const rows = [];
+
+    for (let i = 0; i < buttons.length; i += 5) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          buttons.slice(i, i + 5)
+        )
+      );
+    }
+
+    await interaction.reply({
+      embeds: [embed],
+      components: rows,
+    });
   },
 };
