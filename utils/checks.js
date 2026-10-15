@@ -2,6 +2,7 @@
 
 // Cut long text so it fits in a Discord message.
 function clip(text, max) {
+  text = String(text ?? '');
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
@@ -29,6 +30,12 @@ function checkTarget(interaction, member) {
   const isOwner = interaction.user.id === interaction.guild.ownerId;
   if (!isOwner && member.roles.highest.position >= interaction.member.roles.highest.position) {
     return "Their top role is the same as or higher than yours, so you can't do that.";
+  }
+
+  // The bot also has to outrank them, or Discord will refuse the action.
+  const me = interaction.guild.members.me;
+  if (me && member.roles.highest.position >= me.roles.highest.position) {
+    return "Their top role is higher than mine, so I can't do that. Move my role above theirs in Server Settings > Roles.";
   }
   return null;
 }
