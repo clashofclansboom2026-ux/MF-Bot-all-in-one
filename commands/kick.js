@@ -1,79 +1,52 @@
-
-const {
-  SlashCommandBuilder,
-  PermissionFlagsBits,
-  MessageFlags,
-} = require('discord.js');
-
-const { sendModLog } = require('../utils/modLog');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { hidden, confirm, notifyUser, recordAction } = require('../utils/modCore');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('kick')
     .setDescription('Kick a member from the server')
-    .addUserOption(option =>
-      option
-        .setName('member')
-        .setDescription('The member to kick')
-        .setRequired(true)
+    .addUserOption((o) =>
+      o.setName('member').setDescription('The member to kick').setRequired(true)
     )
-    .addStringOption(option =>
-      option
-        .setName('reason')
-        .setDescription('Reason for the kick')
-        .setMaxLength(500)
-        .setRequired(false)
+    .addStringOption((o) =>
+      o.setName('reason').setDescription('Reason for the kick').setMaxLength(500)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
 
   async execute(interaction) {
-    if (!interaction.memberPermissions.has(
-      PermissionFlagsBits.KickMembers
-    )) {
-      return interaction.reply({
-        content: 'You need the Kick Members permission to use this command.',
-        flags: MessageFlags.Ephemeral,
-      });
+    if (!interaction.inGuild()) return interaction.reply(hidden('Use this in a server.'));
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.KickMembers)) {
+      return interaction.reply(hidden('You need the Kick Members permission to use this command.'));
     }
 
-    const user = interaction.options.getUser('member');
-    const reason =
-      interaction.options.getString('reason') || 'No reason provided';
+    const user = interaction.options.getUser('member', true);
+    const reason = interaction.options.getString('reason') || 'No reason provided';
 
-    await interaction.deferReply({
-      flags: MessageFlags.Ephemeral,
-    });
+    const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+    if (!member) {
+      return interaction.reply(hidden('That person is not in this server, so there is nobody to kick.'));
+    }
+    if (!member.kickable) {
+      return interaction.reply(
+        hidden('I cannot kick that member. Check my permissions and role hierarchy.')
+      );
+    }
+
+    const sure = await confirm(interaction, `⚠️ Kick **${user.tag}**?\n**Reason:** ${reason}`);
+    if (!sure) return;
+
+    // Message them first. Once they are kicked, I can no longer reach them.
+    const dmSent = await notifyUser(interaction.guild, user, 'kick', reason);
 
     try {
-      const member = await interaction.guild.members.fetch(user.id);
-
-      if (!member.kickable) {
-        return interaction.editReply(
-          'I cannot kick that member. Check my permissions and role hierarchy.'
-        );
-      }
-
-      await member.kick(
-        `${reason} | Moderator: ${interaction.user.tag}`
-      );
-
-      await sendModLog(interaction.guild, {
-        title: 'Member Kicked',
-        description:
-          `**Member:** ${user.tag} (${user.id})\n` +
-          `**Moderator:** ${interaction.user.tag}\n` +
-          `**Reason:** ${reason}`,
-      });
-
-      await interaction.editReply(
-        `Successfully kicked **${user.tag}**.\nReason: ${reason}`
-      );
+      await member.kick(`${reason} | Moderator: ${interaction.user.tag}`);
     } catch (error) {
       console.error('Error in /kick:', error);
-
-      await interaction.editReply(
+      return interaction.editReply(
         'Failed to kick that member. Check my permissions and role hierarchy.'
       );
     }
+
+    await recordAction(interaction, { type: 'kick', user, reason, dmSent });
   },
 };
