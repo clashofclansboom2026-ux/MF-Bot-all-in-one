@@ -12,12 +12,11 @@ const {
 } = require('discord.js');
 
 const reminders = require('../utils/reminders');
+const polls = require('../utils/polls');
 
 const hidden = (content) => ({ content, flags: MessageFlags.Ephemeral });
 const stamp = (ms) => Math.floor(ms / 1000);
 const COLOR = 0x5865f2;
-
-const NUMBERS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
 
 // A row of link buttons. Skips any that have no link.
 function linkButtons(links) {
@@ -31,53 +30,84 @@ function linkButtons(links) {
 
 // ---------- /poll ----------
 
+const MIN_POLL_MS = 60 * 1000; // 1 minute
+const MAX_POLL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+const pollBuilder = new SlashCommandBuilder()
+  .setName('poll')
+  .setDescription('Start a poll that people vote on with buttons')
+  .addStringOption((o) =>
+    o.setName('question').setDescription('What is the poll about?').setMaxLength(200).setRequired(true)
+  )
+  .addStringOption((o) =>
+    o.setName('option1').setDescription('First choice').setMaxLength(100).setRequired(true)
+  )
+  .addStringOption((o) =>
+    o.setName('option2').setDescription('Second choice').setMaxLength(100).setRequired(true)
+  );
+
+for (let n = 3; n <= 10; n++) {
+  pollBuilder.addStringOption((o) =>
+    o.setName(`option${n}`).setDescription(`Choice ${n} (optional)`).setMaxLength(100)
+  );
+}
+
+pollBuilder
+  .addStringOption((o) =>
+    o
+      .setName('duration')
+      .setDescription('How long it runs, e.g. 30m, 2h, 1d (max 7d). Leave empty to end it yourself.')
+  )
+  .addBooleanOption((o) =>
+    o.setName('multiple').setDescription('Let people pick more than one option')
+  );
+
 const poll = {
-  data: new SlashCommandBuilder()
-    .setName('poll')
-    .setDescription('Start a poll that people vote on with reactions')
-    .addStringOption((o) =>
-      o.setName('question').setDescription('What is the poll about?').setMaxLength(200).setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName('option1').setDescription('First choice').setMaxLength(100).setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName('option2').setDescription('Second choice').setMaxLength(100).setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName('option3').setDescription('Third choice (optional)').setMaxLength(100)
-    )
-    .addStringOption((o) =>
-      o.setName('option4').setDescription('Fourth choice (optional)').setMaxLength(100)
-    )
-    .addStringOption((o) =>
-      o.setName('option5').setDescription('Fifth choice (optional)').setMaxLength(100)
-    ),
+  data: pollBuilder,
 
   async execute(interaction) {
+    if (!interaction.inGuild()) return interaction.reply(hidden('Use this in a server.'));
+
     const question = interaction.options.getString('question', true);
-    const options = [1, 2, 3, 4, 5]
-      .map((i) => interaction.options.getString(`option${i}`))
-      .filter(Boolean);
-
-    const embed = new EmbedBuilder()
-      .setColor(COLOR)
-      .setTitle(`📊 ${question}`)
-      .setDescription(options.map((text, i) => `${NUMBERS[i]} ${text}`).join('\n\n'))
-      .setFooter({ text: `Poll started by ${interaction.user.username}` });
-
-    await interaction.reply({ embeds: [embed] });
-    const message = await interaction.fetchReply();
-
-    try {
-      for (let i = 0; i < options.length; i++) await message.react(NUMBERS[i]);
-    } catch {
-      await interaction.followUp(
-        hidden(
-          "I couldn't add the voting reactions. Give my role the Add Reactions and Read Message History permissions."
-        )
-      );
+    const options = [];
+    for (let n = 1; n <= 10; n++) {
+      const text = interaction.options.getString(`option${n}`)?.trim();
+      if (text) options.push(text);
     }
+
+    // Duplicate choices would make the buttons confusing.
+    if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) {
+      return interaction.reply(hidden('Each choice has to be different.'));
+    }
+
+    let endsAt = null;
+    const durationText = interaction.options.getString('duration');
+    if (durationText) {
+      const ms = reminders.parseDuration(durationText);
+      if (ms === null) {
+        return interaction.reply(hidden("I don't understand that time. Try 30m, 2h, 1d or 1h30m."));
+      }
+      if (ms < MIN_POLL_MS) return interaction.reply(hidden('A poll has to run for at least 1 minute.'));
+      if (ms > MAX_POLL_MS) return interaction.reply(hidden('A poll can run for 7 days at most.'));
+      endsAt = Date.now() + ms;
+    }
+
+    const newPoll = {
+      question,
+      options,
+      multiple: interaction.options.getBoolean('multiple') ?? false,
+      creatorId: interaction.user.id,
+      creatorName: interaction.user.username,
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      endsAt,
+      ended: false,
+      votes: {},
+    };
+
+    await interaction.reply(polls.render(newPoll));
+    const message = await interaction.fetchReply();
+    polls.save(message.id, newPoll, interaction.client);
   },
 };
 
