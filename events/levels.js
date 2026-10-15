@@ -2,21 +2,18 @@
 const { Events, EmbedBuilder } = require('discord.js');
 const xp = require('../utils/xp');
 const levelRewards = require('../utils/levelRewards');
+const quests = require('../utils/quests');
 
 module.exports = {
   name: Events.MessageCreate,
-
   async execute(message) {
     if (!message.guild || message.author.bot || !message.member) return;
 
-    // Preserve the existing XP amount: 15–25 per eligible message.
-    const amount = 15 + Math.floor(Math.random() * 11);
-    const result = xp.addXp(
-      message.guild.id,
-      message.author.id,
-      amount
-    );
+    // Track quest progress separately from XP.
+    quests.recordMessage(message.guild.id, message.author.id);
 
+    const amount = 15 + Math.floor(Math.random() * 11);
+    const result = xp.addXp(message.guild.id, message.author.id, amount);
     if (!result?.leveledUp) return;
 
     const rewardResult = await levelRewards.grantRewards(
@@ -41,13 +38,13 @@ module.exports = {
 
     if (!channel?.isTextBased() || !channel.messages) {
       console.warn(
-        `Level-up announcement channel is missing or invalid in guild ${message.guild.id}.`
+        `Level-up announcement channel is missing or not text-based in guild ${message.guild.id}.`
       );
       return;
     }
 
     const earnedText = rewardResult.earned.length
-      ? `\n**Role rewards earned:** ${rewardResult.earned.map(({ role }) => `${role}`).join(', ')}`
+      ? `\n**Role rewards earned:** ${rewardResult.earned.map((entry) => `${entry.role}`).join(', ')}`
       : '';
 
     const levelText = result.level - result.beforeLevel > 1
@@ -56,18 +53,13 @@ module.exports = {
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setDescription(
-        `🎉 ${message.author} reached ${levelText}!${earnedText}`
-      )
+      .setDescription(`🎉 ${message.author} reached ${levelText}!${earnedText}`)
       .setThumbnail(message.author.displayAvatarURL({ size: 128 }));
 
     try {
       await channel.send({
         embeds: [embed],
-        allowedMentions: {
-          users: [message.author.id],
-          roles: [],
-        },
+        allowedMentions: { users: [message.author.id], roles: [] },
       });
     } catch (error) {
       console.error(
