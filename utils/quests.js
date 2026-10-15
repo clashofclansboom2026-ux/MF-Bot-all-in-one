@@ -77,10 +77,7 @@ function recordMessage(guildId, userId, now = new Date()) {
 
   for (const quest of QUESTS) {
     const current = getCurrentProgress(record, quest, now);
-    const progress = Math.min(
-      quest.target,
-      current.progress + 1
-    );
+    const progress = Math.min(quest.target, current.progress + 1);
 
     record[quest.id] = {
       period: current.period,
@@ -139,20 +136,44 @@ function claimQuest(guildId, userId, questId, now = new Date()) {
   all[guildId] ??= {};
   all[guildId][userId] ??= {};
 
-  all[guildId][userId][quest.id] = {
+  const userRecord = all[guildId][userId];
+  const previousQuestRecord = userRecord[quest.id];
+
+  userRecord[quest.id] = {
     period: current.period,
     progress: current.progress,
     claimed: true,
   };
 
-  // Save the claim before awarding XP to prevent repeat claims.
+  // Prevent duplicate claims. If awarding XP fails, restore the quest state.
   store.write('quests', all);
 
-  const xpResult = xp.addBonusXp(
-    guildId,
-    userId,
-    quest.rewardXp
-  );
+  let xpResult;
+
+  try {
+    xpResult = xp.addBonusXp(
+      guildId,
+      userId,
+      quest.rewardXp
+    );
+  } catch (error) {
+    try {
+      if (previousQuestRecord === undefined) {
+        delete userRecord[quest.id];
+      } else {
+        userRecord[quest.id] = previousQuestRecord;
+      }
+
+      store.write('quests', all);
+    } catch (rollbackError) {
+      console.error(
+        'Could not restore quest claim after XP award failed:',
+        rollbackError
+      );
+    }
+
+    throw error;
+  }
 
   return {
     success: true,
