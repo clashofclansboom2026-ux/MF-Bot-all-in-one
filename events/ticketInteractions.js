@@ -7,23 +7,103 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   MessageFlags,
 } = require('discord.js');
 
 const tickets = require('../utils/tickets');
 
+const QUESTIONS = [
+  {
+    id: 'question_1',
+    label: 'What do you need help with?',
+    required: true,
+  },
+  {
+    id: 'question_2',
+    label: 'Please provide more details',
+    required: true,
+  },
+  {
+    id: 'question_3',
+    label: 'Have you tried anything already?',
+    required: false,
+  },
+  {
+    id: 'question_4',
+    label: 'How urgent is this?',
+    required: false,
+  },
+  {
+    id: 'question_5',
+    label: 'Anything else we should know?',
+    required: false,
+  },
+];
+
+function buildQuestionnaire() {
+  const modal = new ModalBuilder()
+    .setCustomId('ticket:create:submit')
+    .setTitle('Open a Support Ticket');
+
+  for (const question of QUESTIONS) {
+    const input = new TextInputBuilder()
+      .setCustomId(question.id)
+      .setLabel(question.label)
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(question.required)
+      .setMaxLength(1000);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(input)
+    );
+  }
+
+  return modal;
+}
+
 module.exports = {
   name: Events.InteractionCreate,
 
   async execute(interaction) {
-    if (!interaction.isButton()) return;
-    if (interaction.customId !== 'ticket:create') return;
+    // Step 1: Show the form when the ticket panel button is clicked.
+    if (
+      interaction.isButton() &&
+      interaction.customId === 'ticket:create'
+    ) {
+      if (!interaction.inGuild()) {
+        return interaction.reply({
+          content: 'Tickets can only be opened inside a server.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      return interaction.showModal(buildQuestionnaire());
+    }
+
+    // Step 2: Create the ticket after the questionnaire is submitted.
+    if (
+      !interaction.isModalSubmit() ||
+      interaction.customId !== 'ticket:create:submit'
+    ) {
+      return;
+    }
+
     if (!interaction.inGuild()) {
       return interaction.reply({
         content: 'Tickets can only be opened inside a server.',
         flags: MessageFlags.Ephemeral,
       });
     }
+
+    const answers = QUESTIONS.map((question) => ({
+      question: question.label,
+      answer: interaction.fields
+        .getTextInputValue(question.id)
+        .trim(),
+    })).filter((item) => item.answer);
 
     await interaction.deferReply({
       flags: MessageFlags.Ephemeral,
@@ -57,22 +137,17 @@ module.exports = {
 
       if (!category || category.type !== ChannelType.GuildCategory) {
         return interaction.editReply({
-          content: 'The configured ticket category could not be found. Ask a server administrator to configure it again.',
+          content: 'The configured ticket category could not be found. Ask an administrator to configure it again.',
         });
       }
 
-      const botMember = guild.members.me || await guild.members.fetchMe();
+      const botMember = guild.members.me ||
+        await guild.members.fetchMe();
 
-      const requiredPermissions = [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.ManageChannels,
-      ];
-
-      const missingPermissions = requiredPermissions.filter(
-        (permission) => !botMember.permissions.has(permission)
-      );
-
-      if (missingPermissions.length > 0) {
+      if (
+        !botMember.permissions.has(PermissionFlagsBits.ViewChannel) ||
+        !botMember.permissions.has(PermissionFlagsBits.ManageChannels)
+      ) {
         return interaction.editReply({
           content: 'I need the View Channels and Manage Channels server permissions to create tickets.',
         });
@@ -163,14 +238,14 @@ module.exports = {
         claimedBy: null,
         closedAt: null,
         closedBy: null,
+        answers,
       });
 
       const embed = new EmbedBuilder()
         .setColor(0x3498db)
         .setTitle(`Ticket #${paddedNumber}`)
         .setDescription(
-          `Hello ${interaction.user}, your ticket has been created.\n\n` +
-          'Please describe your issue in detail. A member of the support team will respond when available.'
+          `Hello ${interaction.user}, your ticket has been created. A member of the support team will respond when available.`
         )
         .addFields(
           {
@@ -182,7 +257,12 @@ module.exports = {
             name: 'Status',
             value: 'Open',
             inline: true,
-          }
+          },
+          ...answers.map((item) => ({
+            name: item.question,
+            value: item.answer.slice(0, 1024),
+            inline: false,
+          }))
         )
         .setTimestamp();
 
@@ -200,7 +280,8 @@ module.exports = {
         .join(' ');
 
       await ticketChannel.send({
-        content: roleMentions || `Support has been requested by ${interaction.user}.`,
+        content: roleMentions ||
+          `Support has been requested by ${interaction.user}.`,
         embeds: [embed],
         components: [row],
         allowedMentions: {
@@ -216,7 +297,8 @@ module.exports = {
       console.error('Could not create ticket:', error);
 
       if (ticketChannel) {
-        await ticketChannel.delete('Ticket creation failed').catch(() => {});
+        await ticketChannel.delete('Ticket creation failed')
+          .catch(() => {});
       }
 
       return interaction.editReply({
