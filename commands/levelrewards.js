@@ -1,4 +1,3 @@
-
 const {
   SlashCommandBuilder,
   EmbedBuilder,
@@ -9,35 +8,73 @@ const {
 
 const rewards = require('../utils/levelRewards');
 
-const ephemeral = (content) => ({
-  content,
-  flags: MessageFlags.Ephemeral,
-});
+const BLUE = 0x5b8cff;
+const RED = 0xe05a67;
+const EPHEMERAL = MessageFlags.Ephemeral;
+
+function makeEmbed(title, description, success = true) {
+  return new EmbedBuilder()
+    .setColor(success ? BLUE : RED)
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({ text: 'Level System • Administration' });
+}
+
+function sortedRewards(settings) {
+  return Object.entries(settings.rewards)
+    .sort((a, b) => Number(a[0]) - Number(b[0]));
+}
+
+function makeRewardsEmbed(settings) {
+  const entries = sortedRewards(settings);
+
+  const embed = new EmbedBuilder()
+    .setColor(BLUE)
+    .setTitle('Level Rewards')
+    .setDescription(
+      entries.length
+        ? entries.map(([level, roleId], index) =>
+            `**${String(index + 1).padStart(2, '0')}**  ·  **Level ${level}**\n` +
+            `　　 <@&${roleId}>`
+          ).join('\n\n')
+        : 'No rewards configured yet.\n\nUse `/levelrewards add` to set your first role reward.'
+    )
+    .addFields({
+      name: 'Configured rewards',
+      value: String(entries.length),
+      inline: true,
+    })
+    .setFooter({
+      text: 'New rewards apply to future level-ups only.',
+    });
+
+  return embed;
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('levelrewards')
-    .setDescription('Configure level-up rewards and announcements')
+    .setDescription('Manage level rewards and announcements')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
 
     .addSubcommand((sub) => sub
       .setName('add')
-      .setDescription('Set a role reward for a level')
-      .addIntegerOption((o) => o
+      .setDescription('Add a role reward for a level')
+      .addIntegerOption((option) => option
         .setName('level')
-        .setDescription('Required level')
+        .setDescription('Level required for this role')
         .setMinValue(1)
         .setMaxValue(10000)
         .setRequired(true))
-      .addRoleOption((o) => o
+      .addRoleOption((option) => option
         .setName('role')
-        .setDescription('Role to award')
+        .setDescription('Role members will receive')
         .setRequired(true)))
 
     .addSubcommand((sub) => sub
       .setName('remove')
       .setDescription('Remove a reward setting')
-      .addIntegerOption((o) => o
+      .addIntegerOption((option) => option
         .setName('level')
         .setDescription('Level reward to remove')
         .setMinValue(1)
@@ -46,152 +83,257 @@ module.exports = {
 
     .addSubcommand((sub) => sub
       .setName('list')
-      .setDescription('List configured level rewards'))
+      .setDescription('View all configured rewards'))
 
     .addSubcommand((sub) => sub
       .setName('channel')
       .setDescription('Set the level-up announcement channel')
-      .addChannelOption((o) => o
+      .addChannelOption((option) => option
         .setName('channel')
-        .setDescription('Announcement text channel')
+        .setDescription('Channel for announcements')
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)))
 
     .addSubcommand((sub) => sub
       .setName('announcements')
       .setDescription('Enable or disable level-up announcements')
-      .addBooleanOption((o) => o
+      .addBooleanOption((option) => option
         .setName('enabled')
-        .setDescription('Whether announcements are enabled')
+        .setDescription('Turn announcements on or off')
         .setRequired(true)))
 
     .addSubcommand((sub) => sub
       .setName('status')
-      .setDescription('Show the current reward configuration')),
+      .setDescription('View the current level system settings')),
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
-      return interaction.reply(ephemeral('Use this command in a server.'));
+      return interaction.reply({
+        embeds: [
+          makeEmbed(
+            'Server Only',
+            'Use this command inside a Discord server.',
+            false
+          ),
+        ],
+        flags: EPHEMERAL,
+      });
     }
 
-    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-      return interaction.reply(
-        ephemeral('You need the Manage Server permission.')
-      );
+    if (!interaction.memberPermissions?.has(
+      PermissionFlagsBits.ManageGuild
+    )) {
+      return interaction.reply({
+        embeds: [
+          makeEmbed(
+            'Permission Required',
+            'You need **Manage Server** permission to manage level rewards.',
+            false
+          ),
+        ],
+        flags: EPHEMERAL,
+      });
     }
 
-    const subcommand = interaction.options.getSubcommand();
+    const action = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
     const settings = rewards.getSettings(guildId);
 
-    if (subcommand === 'add') {
+    if (action === 'add') {
       const level = interaction.options.getInteger('level', true);
       const role = interaction.options.getRole('role', true);
       const botMember = interaction.guild.members.me;
 
-      if (role.id === interaction.guild.id || role.managed) {
-        return interaction.reply(
-          ephemeral('Choose a normal server role that the bot can assign.')
-        );
+      if (role.id === guildId || role.managed) {
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              'Invalid Role',
+              'Choose a normal server role that can be assigned to members.',
+              false
+            ),
+          ],
+          flags: EPHEMERAL,
+        });
       }
 
       if (!botMember?.permissions.has(PermissionFlagsBits.ManageRoles)) {
-        return interaction.reply(
-          ephemeral('I need the Manage Roles permission.')
-        );
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              'Missing Permission',
+              'The bot needs the **Manage Roles** permission.',
+              false
+            ),
+          ],
+          flags: EPHEMERAL,
+        });
       }
 
       if (role.position >= botMember.roles.highest.position) {
-        return interaction.reply(
-          ephemeral('Move my bot role above the selected role in Server Settings → Roles.')
-        );
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              'Role Hierarchy Issue',
+              'Move the bot role above the reward role in **Server Settings → Roles**.',
+              false
+            ),
+          ],
+          flags: EPHEMERAL,
+        });
       }
 
       rewards.setReward(guildId, level, role.id);
 
-      return interaction.reply(ephemeral(
-        `Configured ${role} for **Level ${level}**. This applies to future level-ups only. Members who already passed that level will not receive the role automatically.`
-      ));
+      const embed = makeEmbed(
+        'Reward Saved',
+        `Members reaching **Level ${level}** can earn ${role}.`
+      );
+
+      embed.addFields(
+        {
+          name: 'Level',
+          value: String(level),
+          inline: true,
+        },
+        {
+          name: 'Reward Role',
+          value: `${role}`,
+          inline: true,
+        },
+        {
+          name: 'When It Applies',
+          value: 'Future level-ups only. Existing levels are not rewarded retroactively.',
+        }
+      );
+
+      return interaction.reply({
+        embeds: [embed],
+        flags: EPHEMERAL,
+      });
     }
 
-    if (subcommand === 'remove') {
+    if (action === 'remove') {
       const level = interaction.options.getInteger('level', true);
+      const roleId = settings.rewards[String(level)];
 
-      if (!settings.rewards[String(level)]) {
-        return interaction.reply(
-          ephemeral(`There is no reward configured for Level ${level}.`)
-        );
+      if (!roleId) {
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              'Reward Not Found',
+              `There is no configured reward for **Level ${level}**.`,
+              false
+            ),
+          ],
+          flags: EPHEMERAL,
+        });
       }
 
       rewards.removeReward(guildId, level);
 
-      return interaction.reply(ephemeral(
-        `Removed the Level ${level} reward setting. Members who already earned the role will keep it.`
-      ));
-    }
-
-    if (subcommand === 'list') {
-      const entries = Object.entries(settings.rewards)
-        .sort((a, b) => Number(a[0]) - Number(b[0]));
-
-      if (!entries.length) {
-        return interaction.reply(
-          ephemeral('No rewards configured yet. Use `/levelrewards add`.')
-        );
-      }
-
-      const description = entries
-        .map(([level, roleId]) => `**Level ${level}:** <@&${roleId}>`)
-        .join('\n');
-
       return interaction.reply({
         embeds: [
-          new EmbedBuilder()
-            .setColor(0x5865f2)
-            .setTitle('Configured Level Rewards')
-            .setDescription(description),
+          makeEmbed(
+            'Reward Removed',
+            `The reward for **Level ${level}** (<@&${roleId}>) has been removed from the configuration.\n\nMembers who already earned the role **keep it**.`
+          ),
         ],
-        flags: MessageFlags.Ephemeral,
+        flags: EPHEMERAL,
       });
     }
 
-    if (subcommand === 'channel') {
+    if (action === 'list') {
+      return interaction.reply({
+        embeds: [makeRewardsEmbed(settings)],
+        flags: EPHEMERAL,
+      });
+    }
+
+    if (action === 'channel') {
       const channel = interaction.options.getChannel('channel', true);
+
       rewards.setChannel(guildId, channel.id);
-
-      return interaction.reply(
-        ephemeral(`Level-up announcements will be sent to ${channel}.`)
-      );
-    }
-
-    if (subcommand === 'announcements') {
-      const enabled = interaction.options.getBoolean('enabled', true);
-      rewards.setAnnouncementsEnabled(guildId, enabled);
-
-      return interaction.reply(ephemeral(
-        `Level-up announcements are now **${enabled ? 'enabled' : 'disabled'}**. XP and role rewards will continue working.`
-      ));
-    }
-
-    if (subcommand === 'status') {
-      const entries = Object.entries(settings.rewards)
-        .sort((a, b) => Number(a[0]) - Number(b[0]));
-
-      const description = [
-        `**Reward levels:** ${entries.length ? entries.map(([level]) => level).join(', ') : 'None configured'}`,
-        `**Announcement channel:** ${settings.channelId ? `<#${settings.channelId}>` : 'Not configured'}`,
-        `**Announcements:** ${settings.announcementsEnabled ? 'Enabled' : 'Disabled'}`,
-        '**Reward behaviour:** Cumulative; new settings apply to future level-ups only.',
-      ].join('\n');
 
       return interaction.reply({
         embeds: [
-          new EmbedBuilder()
-            .setColor(0x5865f2)
-            .setTitle('Level Rewards Status')
-            .setDescription(description),
+          makeEmbed(
+            'Announcement Channel Updated',
+            `Level-up announcements will be sent to ${channel}.`
+          ),
         ],
-        flags: MessageFlags.Ephemeral,
+        flags: EPHEMERAL,
+      });
+    }
+
+    if (action === 'announcements') {
+      const enabled = interaction.options.getBoolean('enabled', true);
+
+      rewards.setAnnouncementsEnabled(guildId, enabled);
+
+      return interaction.reply({
+        embeds: [
+          makeEmbed(
+            enabled ? 'Announcements Enabled' : 'Announcements Disabled',
+            enabled
+              ? 'Level-up announcements are now on. XP and role rewards continue working.'
+              : 'Level-up announcements are now off. **XP and role rewards will continue working.**'
+          ),
+        ],
+        flags: EPHEMERAL,
+      });
+    }
+
+    if (action === 'status') {
+      const entries = sortedRewards(settings);
+
+      const embed = new EmbedBuilder()
+        .setColor(BLUE)
+        .setTitle('Level System Overview')
+        .setDescription('Current settings for this server.')
+        .addFields(
+          {
+            name: 'Configured Rewards',
+            value: String(entries.length),
+            inline: true,
+          },
+          {
+            name: 'Announcements',
+            value: settings.announcementsEnabled ? 'Enabled' : 'Disabled',
+            inline: true,
+          },
+          {
+            name: 'Announcement Channel',
+            value: settings.channelId
+              ? `<#${settings.channelId}>`
+              : 'Not set — uses the message channel',
+            inline: false,
+          },
+          {
+            name: 'Reward Rules',
+            value: 'Rewards apply to future level-ups. Previously earned roles are kept when a reward is removed.',
+            inline: false,
+          }
+        )
+        .setFooter({
+          text: 'XP formula and earning cooldown remain unchanged.',
+        });
+
+      if (entries.length) {
+        const rewardList = entries
+          .map(([level, roleId]) => `**Level ${level}** → <@&${roleId}>`)
+          .join('\n')
+          .slice(0, 1024);
+
+        embed.addFields({
+          name: 'Reward Levels',
+          value: rewardList,
+        });
+      }
+
+      return interaction.reply({
+        embeds: [embed],
+        flags: EPHEMERAL,
       });
     }
   },
