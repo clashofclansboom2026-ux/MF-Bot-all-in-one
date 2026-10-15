@@ -5,6 +5,8 @@
 // It needs NO extra packages. It only turns on if DISCORD_CLIENT_SECRET is set
 // in your host's Env tab, so it can't break the bot if you haven't set it up yet.
 
+const fs = require('node:fs');
+const nodePath = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Events, ChannelType, PermissionFlagsBits } = require('discord.js');
@@ -15,6 +17,10 @@ const { sendModLog } = require('../utils/modLog');
 
 const API = 'https://discord.com/api/v10';
 const SESSION_HOURS = 12;
+const ASSETS = {
+  '/assets/logo.png': { file: 'logo.png', type: 'image/png' },
+  '/assets/banner.jpg': { file: 'banner.jpg', type: 'image/jpeg' },
+};
 
 // ---------- small helpers ----------
 
@@ -116,45 +122,68 @@ function makeDashboard(client, options = {}) {
 
   // ---------- pages ----------
 
+  const BRAND = 'MF Bot';
+
   const css = `
-    :root{color-scheme:dark light;--bg:#0f1115;--card:#181b22;--text:#eef0f5;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5865f2}
-    @media (prefers-color-scheme:light){:root{--bg:#f4f5f8;--card:#fff;--text:#14171f;--muted:#5d6676;--line:#dde1e8}}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
-    main{max-width:640px;margin:0 auto;padding:20px 16px 60px}
-    h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.1rem;margin:0 0 .6em}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0}
+    :root{--bg:#05070d;--panel:#0a0f1c;--panel2:#0d1426;--line:#18233f;--text:#e9eef8;--muted:#8c97ad;--silver:#cfd6e4;--blue:#2d7bff;--blue2:#4da3ff;--ok:#2fbf71;--bad:#e5484d}
+    *{box-sizing:border-box}
+    html{background:var(--bg)}
+    body{margin:0;color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;
+      background:radial-gradient(900px 420px at 50% -120px,rgba(45,123,255,.16),transparent 70%),var(--bg)}
+    main{max-width:720px;margin:0 auto;padding:0 16px 64px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 0;border-bottom:1px solid var(--line)}
+    .brand{display:flex;align-items:center;gap:10px;color:var(--text);text-decoration:none;font-weight:700;letter-spacing:.02em}
+    .brand img{width:34px;height:34px}
+    .brand span b{color:var(--blue2)}
+    h1{font-size:1.6rem;line-height:1.2;margin:.9em 0 .3em;letter-spacing:.01em}
+    h2{font-size:1rem;margin:0 0 .5em;color:var(--silver);letter-spacing:.06em;text-transform:uppercase}
+    .hero{margin:18px 0 6px;border:1px solid var(--line);border-radius:16px;overflow:hidden;position:relative;background:#000}
+    .hero img{display:block;width:100%;height:auto;max-height:220px;object-fit:cover}
+    .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
     .muted{color:var(--muted);font-size:.92rem}
-    a.btn,button{display:inline-block;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px 18px;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}
-    button.plain{background:transparent;color:var(--muted);border:1px solid var(--line)}
-    label{display:block;margin:12px 0 4px;font-weight:600}
-    input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
-    .row{display:flex;gap:10px}.row>div{flex:1}
-    .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
-    .ok{border-color:#2e9e5b}.bad{border-color:#d9534f}
-    ul{list-style:none;padding:0;margin:0}li a{display:block;padding:14px;border-radius:10px;border:1px solid var(--line);margin:8px 0;color:inherit;text-decoration:none}
-    li a:hover{border-color:var(--accent)}`;
+    a{color:var(--blue2)}
+    a.btn,button{display:inline-block;background:linear-gradient(180deg,#3a86ff,#1f63e0);color:#fff;border:0;border-radius:10px;padding:12px 20px;font:inherit;font-weight:600;text-decoration:none;cursor:pointer;box-shadow:0 0 0 1px rgba(77,163,255,.35),0 6px 22px rgba(45,123,255,.25)}
+    a.btn:hover,button:hover{filter:brightness(1.08)}
+    button.plain{background:transparent;color:var(--muted);box-shadow:none;border:1px solid var(--line);padding:8px 14px;font-weight:500}
+    label{display:block;margin:14px 0 6px;font-weight:600;color:var(--silver);font-size:.95rem}
+    input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#060a14;color:var(--text);font:inherit}
+    input:focus,select:focus{outline:2px solid var(--blue);border-color:var(--blue)}
+    .row{display:flex;gap:12px}.row>div{flex:1}
+    .note{border-left:3px solid var(--blue);padding:12px 14px;border-radius:10px;background:var(--panel);margin:14px 0}
+    .note.ok{border-left-color:var(--ok)}.note.bad{border-left-color:var(--bad)}
+    ul{list-style:none;padding:0;margin:0}
+    li a{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);margin:8px 0;color:var(--text);text-decoration:none}
+    li a:after{content:"›";color:var(--blue2);font-size:1.4rem}
+    li a:hover{border-color:var(--blue)}
+    .crumb{display:inline-block;margin-top:14px;color:var(--muted);text-decoration:none;font-size:.92rem}
+    @media (max-width:480px){.row{flex-direction:column;gap:0}}`;
 
-  const page = (title, body) =>
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${css}</style></head><body><main>${body}</main></body></html>`;
+  const page = (title, body, session) =>
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#05070d"><title>${esc(title)} · ${BRAND}</title><link rel="icon" href="/assets/logo.png"><style>${css}</style></head><body><main>${header(session)}${body}</main></body></html>`;
 
-  const topBar = (session) =>
-    `<div class="top"><h1>${esc(client.user?.username ?? 'Bot')} dashboard</h1>` +
-    (session
-      ? `<form method="post" action="/logout"><input type="hidden" name="csrf" value="${csrfFor(session)}"><button class="plain">Log out</button></form>`
-      : '') +
-    `</div>`;
+  function header(session) {
+    const name = client.user?.username ?? BRAND;
+    return (
+      `<header><a class="brand" href="/"><img src="/assets/logo.png" alt=""><span>${esc(name)} <b>Dashboard</b></span></a>` +
+      (session
+        ? `<form method="post" action="/logout"><input type="hidden" name="csrf" value="${csrfFor(session)}"><button class="plain">Log out</button></form>`
+        : '') +
+      `</header>`
+    );
+  }
 
   const homePage = (session, guilds) =>
     page(
       'Dashboard',
-      topBar(session) +
+      `<div class="hero"><img src="/assets/banner.jpg" alt=""></div>` +
         (!session
-          ? `<div class="card"><p>Log in with Discord to change your bot's settings from here.</p><a class="btn" href="/login">Log in with Discord</a><p class="muted">I only see your name. I can't see your messages or do anything as you.</p></div>`
-          : `<p class="muted">Logged in as <b>${esc(session.name)}</b></p><div class="card"><h2>Your servers</h2>` +
+          ? `<h1>Manage ${esc(client.user?.username ?? BRAND)}</h1><div class="card"><p>Log in with Discord to change your bot's settings from here.</p><a class="btn" href="/login">Log in with Discord</a><p class="muted">Only your name is shared. It cannot read your messages or act as you.</p></div>`
+          : `<h1>Welcome, ${esc(session.name)}</h1><div class="card"><h2>Your servers</h2>` +
             (guilds.length
               ? `<ul>${guilds.map((g) => `<li><a href="/guild/${esc(g.id)}">${esc(g.name)}</a></li>`).join('')}</ul>`
-              : `<p class="muted">I couldn't find a server where you have <b>Manage Server</b> and my bot is also in it.</p>`) +
-            `</div>`)
+              : `<p class="muted">No servers found. You need <b>Manage Server</b> in a server that the bot is also in.</p>`) +
+            `</div>`),
+      session
     );
 
   function guildPage(session, guild, message) {
@@ -170,9 +199,8 @@ function makeDashboard(client, options = {}) {
 
     return page(
       guild.name,
-      topBar(session) +
-        `<p><a href="/" class="muted">← All servers</a></p><h1>${esc(guild.name)}</h1>` +
-        (message ? `<div class="card ${message.ok ? 'ok' : 'bad'}">${esc(message.text)}</div>` : '') +
+      `<a href="/" class="crumb">← All servers</a><h1>${esc(guild.name)}</h1>` +
+        (message ? `<div class="note ${message.ok ? 'ok' : 'bad'}">${esc(message.text)}</div>` : '') +
         `<form method="post" action="/guild/${esc(guild.id)}">
           <input type="hidden" name="csrf" value="${csrfFor(session)}">
           <div class="card"><h2>Moderation log</h2>
@@ -182,7 +210,7 @@ function makeDashboard(client, options = {}) {
             ${channels.map((c) => `<option value="${esc(c.id)}"${c.id === config.modLogChannelId ? ' selected' : ''}>#${esc(c.name)}</option>`).join('')}
             </select></div>
           <div class="card"><h2>Anti-spam</h2>
-            <p class="muted">If someone sends too many messages too fast, I delete them and time the person out. Admins and people who can Manage Messages are ignored.</p>
+            <p class="muted">If someone sends too many messages too fast, their messages are deleted and they are timed out. Admins and people who can Manage Messages are ignored.</p>
             <div class="row">
               <div><label for="m">Messages</label><input id="m" name="messages" type="number" min="2" max="10" value="${messages}" required></div>
               <div><label for="w">Within (seconds)</label><input id="w" name="window" type="number" min="3" max="30" value="${windowSec}" required></div>
@@ -190,11 +218,12 @@ function makeDashboard(client, options = {}) {
             <label for="t">Timeout (minutes)</label><input id="t" name="timeout" type="number" min="1" max="1440" value="${timeoutMin}" required>
           </div>
           <button>Save settings</button>
-        </form>`
+        </form>`,
+      session
     );
   }
 
-  const notice = (title, text) => page(title, `<div class="card"><h2>${esc(title)}</h2><p>${esc(text)}</p><a class="btn" href="/">Back</a></div>`);
+  const notice = (title, text) => page(title, `<div class="card"><h2>${esc(title)}</h2><p>${esc(text)}</p><a class="btn" href="/">Back</a></div>`, null);
 
   // ---------- the server ----------
 
@@ -205,7 +234,7 @@ function makeDashboard(client, options = {}) {
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'same-origin',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
       ...extra,
     });
     res.end(body);
@@ -237,6 +266,18 @@ function makeDashboard(client, options = {}) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
     const session = getSession(req);
+
+    // Logo and banner pictures (from the "assets" folder)
+    if (req.method === 'GET' && ASSETS[path]) {
+      try {
+        const file = fs.readFileSync(nodePath.join(__dirname, '..', 'assets', ASSETS[path].file));
+        res.writeHead(200, { 'Content-Type': ASSETS[path].type, 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(file);
+      } catch {
+        res.writeHead(404);
+        return res.end();
+      }
+    }
 
     // Home
     if (req.method === 'GET' && path === '/') {
