@@ -1,74 +1,75 @@
 // Warning commands: /warn, /warnings, /clearwarns
 // Warnings are saved in data/warns.json, so they survive restarts.
+// Every action also gets a case number (see utils/modCore.js).
 
-const {
-  SlashCommandBuilder,
-  PermissionFlagsBits,
-  MessageFlags,
-} = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const store = require('../utils/store');
-const { sendModLog } = require('../utils/modLog');
-const { tryDM, clip } = require('../utils/checks');
+const { clip } = require('../utils/checks');
+const { ACTIONS, hidden, defer, confirm, notifyUser, recordAction } = require('../utils/modCore');
 
-const hidden = (content) => ({ content, flags: MessageFlags.Ephemeral });
 const getList = (all, guildId, userId) => all[guildId]?.[userId] ?? [];
+
+const needPerm = (interaction) =>
+  interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)
+    ? null
+    : interaction.reply(hidden('You need the Moderate Members permission to use this command.'));
 
 const warn = {
   data: new SlashCommandBuilder()
     .setName('warn')
     .setDescription('Give a member a warning')
-    .addUserOption((o) =>
-      o.setName('member').setDescription('Who to warn').setRequired(true)
-    )
+    .addUserOption((o) => o.setName('member').setDescription('Who to warn').setRequired(true))
     .addStringOption((o) =>
-      o
-        .setName('reason')
-        .setDescription('Why they are being warned')
-        .setMaxLength(500)
-        .setRequired(true)
+      o.setName('reason').setDescription('Why they are being warned').setMaxLength(500).setRequired(true)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(interaction) {
     if (!interaction.inGuild()) return interaction.reply(hidden('Use this in a server.'));
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return needPerm(interaction);
+    }
 
     const user = interaction.options.getUser('member', true);
     const reason = interaction.options.getString('reason', true);
     if (user.bot) return interaction.reply(hidden("You can't warn a bot."));
 
+    await defer(interaction);
+
+    // Save the warning.
     const all = store.read('warns', {});
     all[interaction.guildId] ??= {};
     all[interaction.guildId][user.id] ??= [];
-    all[interaction.guildId][user.id].push({
+    const entry = {
       reason,
       moderator: interaction.user.tag,
       moderatorId: interaction.user.id,
       at: Date.now(),
-    });
+    };
+    all[interaction.guildId][user.id].push(entry);
     store.write('warns', all);
     const total = all[interaction.guildId][user.id].length;
 
-    const dmSent = await tryDM(
-      user,
-      `⚠️ You were warned in **${interaction.guild.name}**.\nReason: ${reason}`
-    );
+    const dmSent = await notifyUser(interaction.guild, user, 'warn', reason, [
+      `**Total warnings:** ${total}`,
+    ]);
 
-    await sendModLog(interaction.guild, {
-      title: 'Member Warned',
-      description:
-        `**Member:** ${user.tag} (${user.id})\n` +
-        `**Moderator:** ${interaction.user.tag}\n` +
-        `**Reason:** ${reason}\n` +
-        `**Total warnings:** ${total}`,
+    const number = await recordAction(interaction, {
+      type: 'warn',
+      user,
+      reason,
+      dmSent,
+      fields: [{ name: 'Total warnings', value: total }],
     });
 
-    await interaction.reply(
-      hidden(
-        `Warned **${user.tag}** (warning #${total}).\nReason: ${reason}\n` +
-          (dmSent ? 'I sent them a DM.' : "I couldn't DM them (their DMs may be closed).")
-      )
-    );
+    // Remember which case this warning belongs to.
+    const fresh = store.read('warns', {});
+    const saved = fresh[interaction.guildId]?.[user.id];
+    if (saved && saved.length) {
+      saved[saved.length - 1].case = number;
+      store.write('warns', fresh);
+    }
   },
 };
 
@@ -83,6 +84,9 @@ const warnings = {
 
   async execute(interaction) {
     if (!interaction.inGuild()) return interaction.reply(hidden('Use this in a server.'));
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return needPerm(interaction);
+    }
 
     const user = interaction.options.getUser('member', true);
     const list = getList(store.read('warns', {}), interaction.guildId, user.id);
@@ -93,20 +97,21 @@ const warnings = {
 
     // Show the 10 most recent.
     const start = Math.max(0, list.length - 10);
-    const lines = list
-      .slice(start)
-      .map(
-        (w, i) =>
-          `**${start + i + 1}.** ${clip(w.reason, 150)} - by ${w.moderator} <t:${Math.floor(w.at / 1000)}:R>`
-      );
-
-    await interaction.reply(
-      hidden(
-        `**${user.tag}** has ${list.length} warning(s)` +
-          (start > 0 ? ` (showing the latest 10)` : '') +
-          `:\n${lines.join('\n')}`
-      )
+    const lines = list.slice(start).map(
+      (w, i) =>
+        `**${start + i + 1}.** ${clip(w.reason, 150)}\n` +
+        `By ${w.moderator} <t:${Math.floor(w.at / 1000)}:R>` +
+        (w.case ? ` • Case #${w.case}` : '')
     );
+
+    const embed = new EmbedBuilder()
+      .setColor(ACTIONS.warn.color)
+      .setAuthor({ name: user.tag, iconURL: user.displayAvatarURL() })
+      .setTitle(`⚠️ ${list.length} warning(s)`)
+      .setDescription(lines.join('\n\n'))
+      .setFooter({ text: start > 0 ? 'Showing the latest 10' : `User ID: ${user.id}` });
+
+    await interaction.reply({ embeds: [embed], flags: 64 });
   },
 };
 
@@ -121,27 +126,33 @@ const clearwarns = {
 
   async execute(interaction) {
     if (!interaction.inGuild()) return interaction.reply(hidden('Use this in a server.'));
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return needPerm(interaction);
+    }
 
     const user = interaction.options.getUser('member', true);
-    const all = store.read('warns', {});
-    const count = getList(all, interaction.guildId, user.id).length;
+    const count = getList(store.read('warns', {}), interaction.guildId, user.id).length;
 
     if (count === 0) {
       return interaction.reply(hidden(`**${user.tag}** has no warnings to clear.`));
     }
 
-    delete all[interaction.guildId][user.id];
+    const sure = await confirm(
+      interaction,
+      `⚠️ Clear all **${count}** warning(s) for **${user.tag}**? This cannot be undone.`
+    );
+    if (!sure) return;
+
+    const all = store.read('warns', {});
+    delete all[interaction.guildId]?.[user.id];
     store.write('warns', all);
 
-    await sendModLog(interaction.guild, {
-      title: 'Warnings Cleared',
-      description:
-        `**Member:** ${user.tag} (${user.id})\n` +
-        `**Moderator:** ${interaction.user.tag}\n` +
-        `**Warnings removed:** ${count}`,
+    await recordAction(interaction, {
+      type: 'clearwarns',
+      user,
+      reason: 'Warnings cleared by a moderator',
+      fields: [{ name: 'Warnings removed', value: count }],
     });
-
-    await interaction.reply(hidden(`Cleared ${count} warning(s) for **${user.tag}**.`));
   },
 };
 
