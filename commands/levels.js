@@ -198,18 +198,18 @@ const leaderboard = {
         });
 
       const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`levels_previous_${interaction.id}`)
-          .setLabel('Previous')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === 0),
+  new ButtonBuilder()
+    .setCustomId(`levels_previous_${interaction.id}`)
+    .setLabel('Previous')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page === 0),
 
-        new ButtonBuilder()
-          .setCustomId(`levels_next_${interaction.id}`)
-          .setLabel('Next')
-          .setStyle(ButtonStyle.Primary)
-          .setDisabled(page >= maxPage)
-      );
+  new ButtonBuilder()
+    .setCustomId(`levels_next_${interaction.id}`)
+    .setLabel('Next')
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(page >= maxPage)
+);
 
       return {
         embeds: [embed],
