@@ -1,4 +1,3 @@
-
 const {
   Events,
   ChannelType,
@@ -11,37 +10,126 @@ const {
   TextInputBuilder,
   TextInputStyle,
   MessageFlags,
+  ChannelSelectMenuBuilder,
+  RoleSelectMenuBuilder,
 } = require('discord.js');
 
 const tickets = require('../utils/tickets');
 
 const QUESTIONS = [
-  {
-    id: 'question_1',
-    label: 'What do you need help with?',
-    required: true,
-  },
-  {
-    id: 'question_2',
-    label: 'Please provide more details',
-    required: true,
-  },
-  {
-    id: 'question_3',
-    label: 'Have you tried anything already?',
-    required: false,
-  },
-  {
-    id: 'question_4',
-    label: 'How urgent is this?',
-    required: false,
-  },
-  {
-    id: 'question_5',
-    label: 'Anything else we should know?',
-    required: false,
-  },
+  { id: 'question_1', label: 'What do you need help with?', required: true },
+  { id: 'question_2', label: 'Please provide more details', required: true },
+  { id: 'question_3', label: 'Have you tried anything already?', required: false },
+  { id: 'question_4', label: 'How urgent is this?', required: false },
+  { id: 'question_5', label: 'Anything else we should know?', required: false },
 ];
+
+function dashboardEmbed(guild, settings) {
+  return new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle('Ticket System Dashboard')
+    .setDescription(
+      'Select a section below to configure your ticket system.'
+    )
+    .addFields(
+      {
+        name: 'Ticket Category',
+        value: settings.categoryId ? `<#${settings.categoryId}>` : 'Not configured',
+        inline: true,
+      },
+      {
+        name: 'Logs & Transcripts',
+        value: settings.logChannelId ? `<#${settings.logChannelId}>` : 'Not configured',
+        inline: true,
+      },
+      {
+        name: 'Maximum Open Tickets',
+        value: String(settings.maxOpenPerUser ?? 3),
+        inline: true,
+      },
+      {
+        name: 'Staff Roles',
+        value: settings.staffRoleIds?.length
+          ? settings.staffRoleIds.map(id => `<@&${id}>`).join(', ')
+          : 'Not configured',
+      },
+      {
+        name: 'Support Roles',
+        value: settings.supportRoleIds?.length
+          ? settings.supportRoleIds.map(id => `<@&${id}>`).join(', ')
+          : 'Not configured',
+      }
+    )
+    .setFooter({ text: `${guild.name} • Ticket Configuration` })
+    .setTimestamp();
+}
+
+function dashboardMenu() {
+  const { StringSelectMenuBuilder, StringSelectMenuOptionBuilder } =
+    require('discord.js');
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('ticketsetup:section')
+      .setPlaceholder('Choose a settings section')
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('General Settings')
+          .setDescription('Ticket category and open-ticket limit')
+          .setValue('general'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Staff & Support')
+          .setDescription('Configure ticket access roles')
+          .setValue('staff'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Logs & Transcripts')
+          .setDescription('Choose the transcript destination')
+          .setValue('logs'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Ticket Panel')
+          .setDescription('How to publish your member-facing panel')
+          .setValue('panel')
+      )
+  );
+}
+
+function dashboardButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('ticketsetup:refresh')
+      .setLabel('Refresh')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function sectionEmbed(section) {
+  const descriptions = {
+    general: 'Choose the category where private tickets are created, or change the maximum number of open tickets per member.',
+    staff: 'Choose staff or support roles. Members with these roles will be able to view and respond to tickets.',
+    logs: 'Choose the text channel where ticket transcripts will be sent when a ticket is closed.',
+    panel: 'To publish the ticket-opening panel, use `/ticketpanel` and select the channel where it should appear. Configure the ticket category first.',
+  };
+
+  return new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle(section.charAt(0).toUpperCase() + section.slice(1) + ' Settings')
+    .setDescription(descriptions[section] || 'Choose a settings section.');
+}
+
+function backButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('ticketsetup:back')
+      .setLabel('Back to Dashboard')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function isAdmin(interaction) {
+  return interaction.memberPermissions?.has(
+    PermissionFlagsBits.ManageGuild
+  );
+}
 
 function buildQuestionnaire() {
   const modal = new ModalBuilder()
@@ -56,9 +144,7 @@ function buildQuestionnaire() {
       .setRequired(question.required)
       .setMaxLength(1000);
 
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(input)
-    );
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
   }
 
   return modal;
@@ -68,7 +154,283 @@ module.exports = {
   name: Events.InteractionCreate,
 
   async execute(interaction) {
-    // Step 1: Show the form when the ticket panel button is clicked.
+    // Ticket setup dashboard: open the selected section.
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === 'ticketsetup:section'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const section = interaction.values[0];
+      const settings = tickets.getSettings(interaction.guildId);
+      const components = [];
+
+      if (section === 'general') {
+        components.push(
+          new ActionRowBuilder().addComponents(
+            new ChannelSelectMenuBuilder()
+              .setCustomId('ticketsetup:category')
+              .setPlaceholder('Select the ticket category')
+              .setChannelTypes(ChannelType.GuildCategory)
+              .setMinValues(1)
+              .setMaxValues(1)
+          ),
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId('ticketsetup:limit')
+              .setLabel(`Change ticket limit (currently ${settings.maxOpenPerUser ?? 3})`)
+              .setStyle(ButtonStyle.Primary)
+          )
+        );
+      }
+
+      if (section === 'staff') {
+        components.push(
+          new ActionRowBuilder().addComponents(
+            new RoleSelectMenuBuilder()
+              .setCustomId('ticketsetup:staffrole')
+              .setPlaceholder('Select staff roles')
+              .setMinValues(0)
+              .setMaxValues(5)
+          ),
+          new ActionRowBuilder().addComponents(
+            new RoleSelectMenuBuilder()
+              .setCustomId('ticketsetup:supportrole')
+              .setPlaceholder('Select support roles')
+              .setMinValues(0)
+              .setMaxValues(5)
+          )
+        );
+      }
+
+      if (section === 'logs') {
+        components.push(
+          new ActionRowBuilder().addComponents(
+            new ChannelSelectMenuBuilder()
+              .setCustomId('ticketsetup:logs')
+              .setPlaceholder('Select the transcript log channel')
+              .setChannelTypes(
+                ChannelType.GuildText,
+                ChannelType.GuildAnnouncement
+              )
+              .setMinValues(1)
+              .setMaxValues(1)
+          )
+        );
+      }
+
+      components.push(backButton());
+
+      return interaction.update({
+        embeds: [sectionEmbed(section)],
+        components,
+      });
+    }
+
+    // Return to the main dashboard.
+    if (
+      interaction.isButton() &&
+      ['ticketsetup:back', 'ticketsetup:refresh'].includes(interaction.customId)
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      return interaction.update({
+        embeds: [
+          dashboardEmbed(
+            interaction.guild,
+            tickets.getSettings(interaction.guildId)
+          ),
+        ],
+        components: [dashboardMenu(), dashboardButtons()],
+      });
+    }
+
+    // Select the ticket category.
+    if (
+      interaction.isChannelSelectMenu() &&
+      interaction.customId === 'ticketsetup:category'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      tickets.updateSettings(interaction.guildId, {
+        categoryId: interaction.values[0],
+      });
+
+      return interaction.update({
+        embeds: [
+          dashboardEmbed(
+            interaction.guild,
+            tickets.getSettings(interaction.guildId)
+          ),
+        ],
+        components: [dashboardMenu(), dashboardButtons()],
+      });
+    }
+
+    // Select the transcript log channel.
+    if (
+      interaction.isChannelSelectMenu() &&
+      interaction.customId === 'ticketsetup:logs'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      tickets.updateSettings(interaction.guildId, {
+        logChannelId: interaction.values[0],
+      });
+
+      return interaction.update({
+        embeds: [
+          dashboardEmbed(
+            interaction.guild,
+            tickets.getSettings(interaction.guildId)
+          ),
+        ],
+        components: [dashboardMenu(), dashboardButtons()],
+      });
+    }
+
+    // Set the staff roles.
+    if (
+      interaction.isRoleSelectMenu() &&
+      interaction.customId === 'ticketsetup:staffrole'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      tickets.updateSettings(interaction.guildId, {
+        staffRoleIds: interaction.values,
+      });
+
+      return interaction.update({
+        embeds: [
+          dashboardEmbed(
+            interaction.guild,
+            tickets.getSettings(interaction.guildId)
+          ),
+        ],
+        components: [dashboardMenu(), dashboardButtons()],
+      });
+    }
+
+    // Set the support roles.
+    if (
+      interaction.isRoleSelectMenu() &&
+      interaction.customId === 'ticketsetup:supportrole'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      tickets.updateSettings(interaction.guildId, {
+        supportRoleIds: interaction.values,
+      });
+
+      return interaction.update({
+        embeds: [
+          dashboardEmbed(
+            interaction.guild,
+            tickets.getSettings(interaction.guildId)
+          ),
+        ],
+        components: [dashboardMenu(), dashboardButtons()],
+      });
+    }
+
+    // Open the ticket limit modal.
+    if (
+      interaction.isButton() &&
+      interaction.customId === 'ticketsetup:limit'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId('ticketsetup:limit:submit')
+        .setTitle('Maximum Open Tickets');
+
+      const input = new TextInputBuilder()
+        .setCustomId('amount')
+        .setLabel('Maximum tickets per member (1–10)')
+        .setStyle(TextInputStyle.Short)
+        .setMinLength(1)
+        .setMaxLength(2)
+        .setRequired(true)
+        .setValue(
+          String(tickets.getSettings(interaction.guildId).maxOpenPerUser ?? 3)
+        );
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(input)
+      );
+
+      return interaction.showModal(modal);
+    }
+
+    // Save the ticket limit.
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId === 'ticketsetup:limit:submit'
+    ) {
+      if (!interaction.inGuild() || !isAdmin(interaction)) {
+        return interaction.reply({
+          content: 'You need Manage Server permission to configure tickets.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const amount = Number(
+        interaction.fields.getTextInputValue('amount')
+      );
+
+      if (!Number.isInteger(amount) || amount < 1 || amount > 10) {
+        return interaction.reply({
+          content: 'Enter a whole number between 1 and 10.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      tickets.updateSettings(interaction.guildId, {
+        maxOpenPerUser: amount,
+      });
+
+      return interaction.reply({
+        content: `Maximum open tickets per member set to ${amount}. Reopen \`/ticketsetup\` to view the updated dashboard.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    // Open a ticket questionnaire.
     if (
       interaction.isButton() &&
       interaction.customId === 'ticket:create'
@@ -83,7 +445,6 @@ module.exports = {
       return interaction.showModal(buildQuestionnaire());
     }
 
-    // Step 2: Create the ticket after the questionnaire is submitted.
     if (
       !interaction.isModalSubmit() ||
       interaction.customId !== 'ticket:create:submit'
@@ -98,16 +459,12 @@ module.exports = {
       });
     }
 
-    const answers = QUESTIONS.map((question) => ({
+    const answers = QUESTIONS.map(question => ({
       question: question.label,
-      answer: interaction.fields
-        .getTextInputValue(question.id)
-        .trim(),
-    })).filter((item) => item.answer);
+      answer: interaction.fields.getTextInputValue(question.id).trim(),
+    })).filter(item => item.answer);
 
-    await interaction.deferReply({
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     let ticketChannel;
 
@@ -117,7 +474,7 @@ module.exports = {
 
       if (!settings.categoryId) {
         return interaction.editReply({
-          content: 'The ticket category is not configured. Ask a server administrator to run `/ticketsetup category`.',
+          content: 'The ticket category is not configured. Ask an administrator to run `/ticketsetup` and select General Settings.',
         });
       }
 
@@ -137,19 +494,18 @@ module.exports = {
 
       if (!category || category.type !== ChannelType.GuildCategory) {
         return interaction.editReply({
-          content: 'The configured ticket category could not be found. Ask an administrator to configure it again.',
+          content: 'The configured ticket category could not be found. Reconfigure it from `/ticketsetup`.',
         });
       }
 
-      const botMember = guild.members.me ||
-        await guild.members.fetchMe();
+      const botMember = guild.members.me || await guild.members.fetchMe();
 
       if (
         !botMember.permissions.has(PermissionFlagsBits.ViewChannel) ||
         !botMember.permissions.has(PermissionFlagsBits.ManageChannels)
       ) {
         return interaction.editReply({
-          content: 'I need the View Channels and Manage Channels server permissions to create tickets.',
+          content: 'I need View Channels and Manage Channels permissions to create tickets.',
         });
       }
 
@@ -191,7 +547,6 @@ module.exports = {
 
       for (const roleId of roleIds) {
         const role = await guild.roles.fetch(roleId).catch(() => null);
-
         if (!role) continue;
 
         permissionOverwrites.push({
@@ -245,20 +600,12 @@ module.exports = {
         .setColor(0x3498db)
         .setTitle(`Ticket #${paddedNumber}`)
         .setDescription(
-          `Hello ${interaction.user}, your ticket has been created. A member of the support team will respond when available.`
+          `Hello ${interaction.user}, your ticket has been created. A support team member will respond when available.`
         )
         .addFields(
-          {
-            name: 'Opened by',
-            value: `${interaction.user}`,
-            inline: true,
-          },
-          {
-            name: 'Status',
-            value: 'Open',
-            inline: true,
-          },
-          ...answers.map((item) => ({
+          { name: 'Opened by', value: `${interaction.user}`, inline: true },
+          { name: 'Status', value: 'Open', inline: true },
+          ...answers.map(item => ({
             name: item.question,
             value: item.answer.slice(0, 1024),
             inline: false,
@@ -275,8 +622,8 @@ module.exports = {
       );
 
       const roleMentions = [...roleIds]
-        .filter((roleId) => guild.roles.cache.has(roleId))
-        .map((roleId) => `<@&${roleId}>`)
+        .filter(roleId => guild.roles.cache.has(roleId))
+        .map(roleId => `<@&${roleId}>`)
         .join(' ');
 
       await ticketChannel.send({
@@ -297,8 +644,7 @@ module.exports = {
       console.error('Could not create ticket:', error);
 
       if (ticketChannel) {
-        await ticketChannel.delete('Ticket creation failed')
-          .catch(() => {});
+        await ticketChannel.delete('Ticket creation failed').catch(() => {});
       }
 
       return interaction.editReply({
