@@ -1,4 +1,3 @@
-// Level commands: /rank and /leaderboard.
 const {
   SlashCommandBuilder,
   EmbedBuilder,
@@ -15,16 +14,11 @@ const { makeRankCard } = require('../utils/rankCard');
 const PAGE_SIZE = 10;
 const COLOUR = 0x5b8cff;
 
-const hidden = (content) => ({
-  content,
-  flags: MessageFlags.Ephemeral,
-});
-
 const rank = {
   data: new SlashCommandBuilder()
     .setName('rank')
     .setDescription('View a member’s level, XP and progress')
-    .addUserOption((option) =>
+    .addUserOption(option =>
       option
         .setName('member')
         .setDescription('Member to view; leave empty to view yourself')
@@ -32,14 +26,20 @@ const rank = {
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
-      return interaction.reply(hidden('Use this command in a server.'));
+      return interaction.reply({
+        content: 'Use this command inside a server.',
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
     const user =
       interaction.options.getUser('member') || interaction.user;
 
     if (user.bot) {
-      return interaction.reply(hidden('Bots do not earn XP.'));
+      return interaction.reply({
+        content: 'Bots do not earn XP.',
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
     await interaction.deferReply();
@@ -49,7 +49,7 @@ const rank = {
     const ranking = xp.ranking(interaction.guildId);
 
     const rankPosition =
-      ranking.findIndex((entry) => entry.userId === user.id) + 1;
+      ranking.findIndex(entry => entry.userId === user.id) + 1;
 
     const member = await interaction.guild.members
       .fetch(user.id)
@@ -77,11 +77,11 @@ const rank = {
 
     const embed = new EmbedBuilder()
       .setColor(COLOUR)
-      .setTitle(`${displayName} · Rank Profile`)
+      .setTitle(`${displayName} | Rank Profile`)
       .setDescription(
         member
-          ? 'Activity, progress and standing in this server.'
-          : 'This user has left the server. Their saved XP is still shown.'
+          ? 'Activity and progress in this server.'
+          : 'This user has left the server. Their saved XP is shown.'
       )
       .setImage('attachment://rank-card.png')
       .setFooter({
@@ -102,23 +102,23 @@ const leaderboard = {
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
-      return interaction.reply(hidden('Use this command in a server.'));
+      return interaction.reply({
+        content: 'Use this command inside a server.',
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
     const ranking = xp.ranking(interaction.guildId);
 
     if (!ranking.length) {
-      const empty = new EmbedBuilder()
+      const embed = new EmbedBuilder()
         .setColor(COLOUR)
-        .setTitle('XP Leaderboard')
+        .setTitle('Server XP Leaderboard')
         .setDescription(
-          '**No rankings yet.**\nSend messages and earn XP to appear here.'
-        )
-        .setFooter({
-          text: 'Rankings update as members earn XP.',
-        });
+          'No rankings yet. Send messages and earn XP to appear here.'
+        );
 
-      return interaction.reply({ embeds: [empty] });
+      return interaction.reply({ embeds: [embed] });
     }
 
     const maxPage = Math.max(
@@ -129,48 +129,38 @@ const leaderboard = {
     let page = 0;
 
     const makePayload = async () => {
-      const slice = ranking.slice(
+      const entries = ranking.slice(
         page * PAGE_SIZE,
         (page + 1) * PAGE_SIZE
       );
 
       const rows = await Promise.all(
-        slice.map(async (entry, index) => {
+        entries.map(async (entry, index) => {
           const position = page * PAGE_SIZE + index + 1;
 
           const member = await interaction.guild.members
             .fetch(entry.userId)
             .catch(() => null);
 
-          const user =
-            member?.user ||
-            (await interaction.client.users
-              .fetch(entry.userId)
-              .catch(() => null));
+          const user = member?.user || await interaction.client.users
+            .fetch(entry.userId)
+            .catch(() => null);
 
-          const name = member?.displayName
-            ? member.displayName
-            : user
-              ? `${user.username} (left server)`
-              : 'Unknown member';
+          const name =
+            member?.displayName ||
+            (user ? `${user.username} (left server)` : 'Unknown member');
 
           const level = xp.levelFromXp(entry.xp).level;
 
-          const place =
-            position === 1
-              ? '🥇'
-              : position === 2
-                ? '🥈'
-                : position === 3
-                  ? '🥉'
-                  : `**${String(position).padStart(2, '0')}**`;
+          let place = `#${position}`;
 
-          const displayName =
-            position <= 3 ? `**${name}**` : name;
+          if (position === 1) place = '1st';
+          if (position === 2) place = '2nd';
+          if (position === 3) place = '3rd';
 
           return (
-            `${place}  ${displayName}\n` +
-            `　 Level **${level}**  ·  **${entry.xp.toLocaleString()} XP**`
+            `**${place} — ${name}**\n` +
+            `Level **${level}** · **${entry.xp.toLocaleString()} XP**`
           );
         })
       );
@@ -179,7 +169,7 @@ const leaderboard = {
         .setColor(COLOUR)
         .setTitle('Server XP Leaderboard')
         .setDescription(
-          `*The most active members in this server*\n\n${rows.join('\n\n')}`
+          `**Top members by total XP**\n\n${rows.join('\n\n')}`
         )
         .addFields(
           {
@@ -198,18 +188,18 @@ const leaderboard = {
         });
 
       const buttons = new ActionRowBuilder().addComponents(
-  new ButtonBuilder()
-    .setCustomId(`levels_previous_${interaction.id}`)
-    .setLabel('Previous')
-    .setStyle(ButtonStyle.Secondary)
-    .setDisabled(page === 0),
+        new ButtonBuilder()
+          .setCustomId(`levels_previous_${interaction.id}`)
+          .setLabel('Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page === 0),
 
-  new ButtonBuilder()
-    .setCustomId(`levels_next_${interaction.id}`)
-    .setLabel('Next')
-    .setStyle(ButtonStyle.Primary)
-    .setDisabled(page >= maxPage)
-);
+        new ButtonBuilder()
+          .setCustomId(`levels_next_${interaction.id}`)
+          .setLabel('Next')
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(page >= maxPage)
+      );
 
       return {
         embeds: [embed],
@@ -224,14 +214,13 @@ const leaderboard = {
     const message = await interaction.fetchReply();
 
     const collector = message.createMessageComponentCollector({
-      time: 120_000,
+      time: 120000,
     });
 
-    collector.on('collect', async (buttonInteraction) => {
+    collector.on('collect', async buttonInteraction => {
       if (buttonInteraction.user.id !== interaction.user.id) {
         return buttonInteraction.reply({
-          content:
-            'Only the person who opened this leaderboard can change its page.',
+          content: 'Only the person who opened this leaderboard can change pages.',
           flags: MessageFlags.Ephemeral,
         });
       }
@@ -265,3 +254,18 @@ const leaderboard = {
           new ButtonBuilder()
             .setCustomId(`levels_next_${interaction.id}`)
             .setLabel('Next')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(true)
+        );
+
+        await message.edit({
+          components: [disabledButtons],
+        });
+      } catch (error) {
+        // The message may have been deleted.
+      }
+    });
+  },
+};
+
+module.exports = [rank, leaderboard];
