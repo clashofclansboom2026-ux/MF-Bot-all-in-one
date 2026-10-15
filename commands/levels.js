@@ -10,9 +10,10 @@ const {
 
 const xp = require('../utils/xp');
 const { makeRankCard } = require('../utils/rankCard');
+const { makeLeaderboardCard } = require('../utils/leaderboardCard');
 
 const PAGE_SIZE = 10;
-const COLOUR = 0x5b8cff;
+const COLOUR = 0x168cff;
 
 function privateReply(content) {
   return {
@@ -145,80 +146,76 @@ const leaderboardCommand = {
         start + PAGE_SIZE
       );
 
-      const lines = [];
+      const entries = await Promise.all(
+        pageEntries.map(async (entry) => {
+          const member = await interaction.guild.members
+            .fetch(entry.userId)
+            .catch(() => null);
 
-      for (let index = 0; index < pageEntries.length; index += 1) {
-        const entry = pageEntries[index];
-        const position = start + index + 1;
+          const user = member
+            ? member.user
+            : await interaction.client.users
+                .fetch(entry.userId)
+                .catch(() => null);
 
-        const member = await interaction.guild.members
-          .fetch(entry.userId)
-          .catch(() => null);
+          return {
+            name:
+              member?.displayName ||
+              user?.globalName ||
+              user?.username ||
+              'Unknown member',
 
-        const user = member
-          ? member.user
-          : await interaction.client.users
-              .fetch(entry.userId)
-              .catch(() => null);
+            avatarUrl: user
+              ? user.displayAvatarURL({
+                  extension: 'png',
+                  size: 128,
+                })
+              : null,
 
-        const name =
-          member?.displayName ||
-          (user
-            ? user.username + ' (left server)'
-            : 'Unknown member');
+            level: xp.levelFromXp(
+              Number(entry.xp || 0)
+            ).level,
 
-        const level = xp.levelFromXp(entry.xp).level;
-        const totalXp = Number(entry.xp || 0).toLocaleString();
+            xp: Number(entry.xp || 0),
+          };
+        })
+      );
 
-        let place = '#' + position;
+      const imageBuffer = await makeLeaderboardCard({
+        entries,
+        page: currentPage,
+        pageCount,
+        totalMembers: ranking.length,
+      });
 
-        if (position === 1) place = '🥇';
-        if (position === 2) place = '🥈';
-        if (position === 3) place = '🥉';
-
-        lines.push('**' + place + '  ' + name + '**');
-        lines.push(
-          'Level **' + level + '**  |  **' + totalXp + ' XP**'
-        );
-        lines.push('');
-      }
-
-      const description = [
-        '**TOP MEMBERS BY TOTAL XP**',
-        '━━━━━━━━━━━━━━━━━━━━',
-        '',
-        ...lines,
-      ].join('\n');
+      const attachment = new AttachmentBuilder(
+        imageBuffer,
+        {
+          name: 'leaderboard.png',
+        }
+      );
 
       const embed = new EmbedBuilder()
         .setColor(COLOUR)
         .setTitle('SERVER XP LEADERBOARD')
-        .setDescription(description.slice(0, 4000))
-        .addFields(
-          {
-            name: 'TRACKED MEMBERS',
-            value: String(ranking.length),
-            inline: true,
-          },
-          {
-            name: 'PAGE',
-            value: currentPage + 1 + ' / ' + pageCount,
-            inline: true,
-          }
-        )
+        .setImage('attachment://leaderboard.png')
         .setFooter({
           text: 'Members who leave remain listed if they have saved XP.',
         });
 
       const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId('levels_previous_' + interaction.id)
+          .setCustomId(
+            'levels_previous_' + interaction.id
+          )
           .setLabel('Previous')
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(currentPage === 0),
 
         new ButtonBuilder()
-          .setCustomId('levels_next_' + interaction.id)
+          .setCustomId(
+            'levels_next_' + interaction.id
+          )
           .setLabel('Next')
           .setStyle(ButtonStyle.Primary)
           .setDisabled(currentPage >= pageCount - 1)
@@ -226,11 +223,15 @@ const leaderboardCommand = {
 
       return {
         embeds: [embed],
+        files: [attachment],
+        attachments: [],
         components: pageCount > 1 ? [buttons] : [],
       };
     }
 
-    await interaction.reply(await buildLeaderboardPayload());
+    await interaction.reply(
+      await buildLeaderboardPayload()
+    );
 
     if (pageCount <= 1) return;
 
@@ -242,7 +243,9 @@ const leaderboardCommand = {
       });
 
     collector.on('collect', async (buttonInteraction) => {
-      if (buttonInteraction.user.id !== interaction.user.id) {
+      if (
+        buttonInteraction.user.id !== interaction.user.id
+      ) {
         return buttonInteraction.reply({
           content:
             'Only the person who opened this leaderboard can change pages.',
@@ -274,25 +277,30 @@ const leaderboardCommand = {
 
     collector.on('end', async () => {
       try {
-        const disabledButtons = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId('levels_previous_' + interaction.id)
-            .setLabel('Previous')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true),
+        const disabledButtons =
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(
+                'levels_previous_' + interaction.id
+              )
+              .setLabel('Previous')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(true),
 
-          new ButtonBuilder()
-            .setCustomId('levels_next_' + interaction.id)
-            .setLabel('Next')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(true)
-        );
+            new ButtonBuilder()
+              .setCustomId(
+                'levels_next_' + interaction.id
+              )
+              .setLabel('Next')
+              .setStyle(ButtonStyle.Primary)
+              .setDisabled(true)
+          );
 
         await replyMessage.edit({
           components: [disabledButtons],
         });
       } catch (error) {
-        // The message may have been deleted.
+        // The reply may have been deleted.
       }
     });
   },
