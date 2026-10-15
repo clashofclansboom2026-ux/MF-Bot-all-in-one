@@ -10,6 +10,7 @@ const {
 } = require('discord.js');
 
 const tickets = require('../utils/tickets');
+const { sendTranscript } = require('../utils/ticketTranscripts');
 
 function isSupportMember(interaction, settings) {
   const member = interaction.member;
@@ -55,19 +56,43 @@ function controlRow(claimed) {
   );
 }
 
+async function updateControlMessage(channel, client, claimed) {
+  const messages = await channel.messages.fetch({ limit: 50 });
+
+  const panelMessage = messages.find((message) =>
+    message.author.id === client.user.id &&
+    message.components.some((row) =>
+      row.components.some((component) =>
+        component.customId === 'ticket:claim'
+      )
+    )
+  );
+
+  if (panelMessage) {
+    await panelMessage.edit({
+      components: [controlRow(claimed)],
+    });
+  }
+}
+
 module.exports = {
   name: Events.InteractionCreate,
 
   async execute(interaction) {
     if (!interaction.isButton()) return;
 
-    const supportedActions = [
-      'ticket:claim',
-      'ticket:unclaim',
-      'ticket:close',
-    ];
+    const action = interaction.customId;
 
-    if (!supportedActions.includes(interaction.customId)) return;
+    if (
+      ![
+        'ticket:claim',
+        'ticket:unclaim',
+        'ticket:close',
+      ].includes(action)
+    ) {
+      return;
+    }
+
     if (!interaction.inGuild()) return;
 
     await interaction.deferReply({
@@ -76,8 +101,8 @@ module.exports = {
 
     try {
       const guildId = interaction.guildId;
-      const channelId = interaction.channelId;
-      const ticket = tickets.getTicket(guildId, channelId);
+      const channel = interaction.channel;
+      const ticket = tickets.getTicket(guildId, channel.id);
 
       if (!ticket) {
         return interaction.editReply({
@@ -93,7 +118,6 @@ module.exports = {
 
       const settings = tickets.getSettings(guildId);
       const isSupport = isSupportMember(interaction, settings);
-      const action = interaction.customId;
 
       if (action === 'ticket:claim' || action === 'ticket:unclaim') {
         if (!isSupport) {
@@ -106,87 +130,71 @@ module.exports = {
           if (ticket.claimedBy && ticket.claimedBy !== interaction.user.id) {
             return interaction.editReply({
               content: `This ticket has already been claimed by <@${ticket.claimedBy}>.`,
+              allowedMentions: { parse: [] },
             });
           }
 
-          tickets.updateTicket(guildId, channelId, {
+          tickets.updateTicket(guildId, channel.id, {
             claimedBy: interaction.user.id,
           });
 
-          const embed = new EmbedBuilder()
-            .setColor(0x3498db)
-            .setTitle('Ticket Claimed')
-            .setDescription(`${interaction.user} has claimed this ticket.`)
-            .setTimestamp();
-
-          await interaction.channel.send({
-            embeds: [embed],
+          await channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x3498db)
+                .setTitle('Ticket Claimed')
+                .setDescription(`${interaction.user} has claimed this ticket.`)
+                .setTimestamp(),
+            ],
             allowedMentions: { users: [interaction.user.id] },
           });
 
-          const message = await interaction.channel.messages.fetch({
-            limit: 20,
+          await updateControlMessage(
+            channel,
+            interaction.client,
+            interaction.user.id
+          ).catch((error) => {
+            console.error('Could not update ticket controls:', error);
           });
-
-          const panelMessage = message.find((item) =>
-            item.author.id === interaction.client.user.id &&
-            item.components.some((row) =>
-              row.components.some((component) =>
-                component.customId === 'ticket:claim'
-              )
-            )
-          );
-
-          if (panelMessage) {
-            await panelMessage.edit({
-              components: [controlRow(interaction.user.id)],
-            }).catch(() => {});
-          }
 
           return interaction.editReply({
             content: 'You have claimed this ticket.',
           });
         }
 
-        if (ticket.claimedBy !== interaction.user.id &&
-            !interaction.memberPermissions?.has(
-              PermissionFlagsBits.ManageChannels
-            )) {
+        if (
+          ticket.claimedBy !== interaction.user.id &&
+          !interaction.memberPermissions?.has(
+            PermissionFlagsBits.ManageChannels
+          )
+        ) {
           return interaction.editReply({
             content: 'Only the person who claimed this ticket or a member with Manage Channels can unclaim it.',
           });
         }
 
-        tickets.updateTicket(guildId, channelId, {
+        tickets.updateTicket(guildId, channel.id, {
           claimedBy: null,
         });
 
-        const embed = new EmbedBuilder()
-          .setColor(0x95a5a6)
-          .setTitle('Ticket Unclaimed')
-          .setDescription(`${interaction.user} has unclaimed this ticket.`)
-          .setTimestamp();
-
-        await interaction.channel.send({ embeds: [embed] });
-
-        const messages = await interaction.channel.messages.fetch({
-          limit: 20,
+        await channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x95a5a6)
+              .setTitle('Ticket Unclaimed')
+              .setDescription(`${interaction.user} has unclaimed this ticket.`)
+              .setTimestamp(),
+          ],
+          allowedMentions: { users: [interaction.user.id] },
         });
 
-        const panelMessage = messages.find((item) =>
-          item.author.id === interaction.client.user.id &&
-          item.components.some((row) =>
-            row.components.some((component) =>
-              component.customId === 'ticket:claim'
-            )
-          )
-        );
-
-        if (panelMessage) {
-          await panelMessage.edit({
-            components: [controlRow(null)],
-          }).catch(() => {});
-        }
+        await updateControlMessage(
+          channel,
+          interaction.client,
+          null
+        ).catch((error) => {
+          console.error('Could not update ticket controls:', error);
+        });
 
         return interaction.editReply({
           content: 'The ticket has been unclaimed.',
@@ -202,35 +210,60 @@ module.exports = {
           });
         }
 
-        tickets.updateTicket(guildId, channelId, {
+        const closedBy = interaction.user;
+
+        // Save the transcript while the channel and its messages still exist.
+        let transcriptResult;
+
+        try {
+          transcriptResult = await sendTranscript(
+            interaction.guild,
+            channel,
+            ticket,
+            closedBy
+          );
+        } catch (error) {
+          console.error('Ticket transcript failed:', error);
+
+          return interaction.editReply({
+            content: 'The transcript could not be saved, so this ticket has not been closed or deleted. Check the bot logs and ticket-log channel permissions, then try again.',
+          });
+        }
+
+        if (!transcriptResult.sent) {
+          return interaction.editReply({
+            content: `The ticket has not been closed or deleted because its transcript was not saved. ${transcriptResult.reason}`,
+          });
+        }
+
+        tickets.updateTicket(guildId, channel.id, {
           status: 'closed',
           closedAt: new Date().toISOString(),
-          closedBy: interaction.user.id,
+          closedBy: closedBy.id,
         });
 
-        const embed = new EmbedBuilder()
-          .setColor(0xe74c3c)
-          .setTitle('Ticket Closed')
-          .setDescription(
-            `This ticket was closed by ${interaction.user}.\n\n` +
-            'The channel will be deleted in 10 seconds.'
-          )
-          .setTimestamp();
-
-        await interaction.channel.send({
-          embeds: [embed],
-          allowedMentions: { users: [interaction.user.id] },
+        await channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xe74c3c)
+              .setTitle('Ticket Closed')
+              .setDescription(
+                `This ticket was closed by ${closedBy}.\n\n` +
+                'The transcript has been saved to the ticket logs channel. ' +
+                'This channel will be deleted in 10 seconds.'
+              )
+              .setTimestamp(),
+          ],
+          allowedMentions: { users: [closedBy.id] },
         });
 
         await interaction.editReply({
-          content: 'Ticket closed. This channel will be deleted in 10 seconds.',
+          content: 'Transcript saved. This ticket will be deleted in 10 seconds.',
         });
 
         setTimeout(async () => {
           try {
-            await interaction.channel.delete(
-              `Ticket closed by ${interaction.user.tag}`
-            );
+            await channel.delete(`Ticket closed by ${closedBy.tag}`);
           } catch (error) {
             console.error('Could not delete closed ticket channel:', error);
           }
