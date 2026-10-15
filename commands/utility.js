@@ -3,6 +3,11 @@
 const {
   SlashCommandBuilder,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  PermissionFlagsBits,
   MessageFlags,
 } = require('discord.js');
 
@@ -10,9 +15,22 @@ const reminders = require('../utils/reminders');
 
 const hidden = (content) => ({ content, flags: MessageFlags.Ephemeral });
 const stamp = (ms) => Math.floor(ms / 1000);
+const COLOR = 0x5865f2;
+
 const NUMBERS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
 
+// A row of link buttons. Skips any that have no link.
+function linkButtons(links) {
+  const buttons = links
+    .filter(([, url]) => url)
+    .map(([label, url]) =>
+      new ButtonBuilder().setLabel(label).setStyle(ButtonStyle.Link).setURL(url)
+    );
+  return buttons.length ? [new ActionRowBuilder().addComponents(buttons)] : [];
+}
+
 // ---------- /poll ----------
+
 const poll = {
   data: new SlashCommandBuilder()
     .setName('poll')
@@ -43,9 +61,9 @@ const poll = {
       .filter(Boolean);
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
+      .setColor(COLOR)
       .setTitle(`📊 ${question}`)
-      .setDescription(options.map((text, i) => `${NUMBERS[i]}  ${text}`).join('\n\n'))
+      .setDescription(options.map((text, i) => `${NUMBERS[i]} ${text}`).join('\n\n'))
       .setFooter({ text: `Poll started by ${interaction.user.username}` });
 
     await interaction.reply({ embeds: [embed] });
@@ -64,6 +82,7 @@ const poll = {
 };
 
 // ---------- /remind ----------
+
 const remind = {
   data: new SlashCommandBuilder()
     .setName('remind')
@@ -101,6 +120,9 @@ const remind = {
 };
 
 // ---------- /serverinfo ----------
+
+const VERIFICATION = ['None', 'Low', 'Medium', 'High', 'Very high'];
+
 const serverinfo = {
   data: new SlashCommandBuilder()
     .setName('serverinfo')
@@ -112,24 +134,102 @@ const serverinfo = {
     const guild = interaction.guild;
     const owner = await guild.fetchOwner().catch(() => null);
 
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(guild.name)
-      .setThumbnail(guild.iconURL())
-      .addFields(
-        { name: 'Owner', value: owner ? owner.user.tag : 'Unknown', inline: true },
-        { name: 'Members', value: String(guild.memberCount), inline: true },
-        { name: 'Created', value: `<t:${stamp(guild.createdTimestamp)}:D>`, inline: true },
-        { name: 'Channels', value: String(guild.channels.cache.size), inline: true },
-        { name: 'Roles', value: String(guild.roles.cache.size), inline: true },
-        { name: 'Boosts', value: String(guild.premiumSubscriptionCount ?? 0), inline: true }
-      );
+    // Count the channels by type.
+    const channels = guild.channels.cache;
+    const count = (...types) => channels.filter((c) => types.includes(c.type)).size;
+    const text = count(ChannelType.GuildText, ChannelType.GuildAnnouncement);
+    const voice = count(ChannelType.GuildVoice, ChannelType.GuildStageVoice);
+    const forums = count(ChannelType.GuildForum);
+    const categories = count(ChannelType.GuildCategory);
 
-    await interaction.reply({ embeds: [embed] });
+    const icon = guild.iconURL({ size: 1024 });
+    const banner = guild.bannerURL({ size: 1024 });
+
+    const embed = new EmbedBuilder()
+      .setColor(COLOR)
+      .setTitle(guild.name)
+      .addFields(
+        { name: '👑 Owner', value: owner ? `${owner.user}` : 'Unknown', inline: true },
+        { name: '👥 Members', value: guild.memberCount.toLocaleString(), inline: true },
+        {
+          name: '📅 Created',
+          value: `<t:${stamp(guild.createdTimestamp)}:D>\n<t:${stamp(guild.createdTimestamp)}:R>`,
+          inline: true,
+        },
+        {
+          name: `💬 Channels (${text + voice + forums})`,
+          value:
+            `Text: **${text}**\nVoice: **${voice}**` +
+            (forums ? `\nForums: **${forums}**` : '') +
+            `\nCategories: **${categories}**`,
+          inline: true,
+        },
+        {
+          name: '🎭 Roles & Emoji',
+          value:
+            `Roles: **${Math.max(0, guild.roles.cache.size - 1)}**\n` +
+            `Emojis: **${guild.emojis.cache.size}**\n` +
+            `Stickers: **${guild.stickers.cache.size}**`,
+          inline: true,
+        },
+        {
+          name: '🚀 Boosts',
+          value: `Level **${guild.premiumTier}**\n**${guild.premiumSubscriptionCount ?? 0}** boost(s)`,
+          inline: true,
+        },
+        {
+          name: '🛡️ Security',
+          value: `Verification: **${VERIFICATION[guild.verificationLevel] ?? 'Unknown'}**`,
+          inline: false,
+        }
+      )
+      .setFooter({ text: `Server ID: ${guild.id}` });
+
+    if (guild.description) embed.setDescription(guild.description);
+    if (icon) embed.setThumbnail(icon);
+    if (banner) embed.setImage(banner);
+
+    await interaction.reply({
+      embeds: [embed],
+      components: linkButtons([
+        ['Server icon', icon],
+        ['Server banner', banner],
+      ]),
+    });
   },
 };
 
 // ---------- /userinfo ----------
+
+// Friendly names for Discord's profile badges.
+const BADGES = {
+  Staff: '🛠️ Discord Staff',
+  Partner: '🤝 Partnered Server Owner',
+  Hypesquad: '🎉 HypeSquad Events',
+  BugHunterLevel1: '🐛 Bug Hunter',
+  BugHunterLevel2: '🐛 Bug Hunter Gold',
+  HypeSquadOnlineHouse1: '🟣 HypeSquad Bravery',
+  HypeSquadOnlineHouse2: '🟠 HypeSquad Brilliance',
+  HypeSquadOnlineHouse3: '🟢 HypeSquad Balance',
+  PremiumEarlySupporter: '⭐ Early Supporter',
+  VerifiedBot: '✅ Verified Bot',
+  VerifiedDeveloper: '💻 Early Verified Bot Developer',
+  CertifiedModerator: '🛡️ Moderator Programs Alumni',
+  ActiveDeveloper: '⚡ Active Developer',
+};
+
+// Powerful permissions worth pointing out on a member.
+const KEY_PERMISSIONS = [
+  [PermissionFlagsBits.ManageGuild, 'Manage Server'],
+  [PermissionFlagsBits.ManageRoles, 'Manage Roles'],
+  [PermissionFlagsBits.ManageChannels, 'Manage Channels'],
+  [PermissionFlagsBits.ManageMessages, 'Manage Messages'],
+  [PermissionFlagsBits.BanMembers, 'Ban Members'],
+  [PermissionFlagsBits.KickMembers, 'Kick Members'],
+  [PermissionFlagsBits.ModerateMembers, 'Moderate Members'],
+  [PermissionFlagsBits.MentionEveryone, 'Mention Everyone'],
+];
+
 const userinfo = {
   data: new SlashCommandBuilder()
     .setName('userinfo')
@@ -141,37 +241,99 @@ const userinfo = {
   async execute(interaction) {
     if (!interaction.inGuild()) return interaction.reply(hidden('Use this in a server.'));
 
-    const user = interaction.options.getUser('member') ?? interaction.user;
+    const picked = interaction.options.getUser('member') ?? interaction.user;
     const member =
       interaction.options.getMember('member') ??
-      (user.id === interaction.user.id ? interaction.member : null);
+      (picked.id === interaction.user.id ? interaction.member : null);
+
+    // Fetch the full profile so we can show their banner too.
+    const user = await interaction.client.users.fetch(picked.id, { force: true }).catch(() => picked);
+
+    const avatar = (member ?? user).displayAvatarURL({ size: 1024 });
+    const banner = user.bannerURL({ size: 1024 });
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(user.tag)
-      .setThumbnail(user.displayAvatarURL())
+      .setColor(member?.displayColor || user.accentColor || COLOR)
+      .setAuthor({ name: user.tag, iconURL: avatar })
+      .setTitle(member?.displayName ?? user.displayName ?? user.username)
+      .setThumbnail(avatar)
       .addFields(
-        { name: 'ID', value: user.id, inline: true },
-        { name: 'Bot?', value: user.bot ? 'Yes' : 'No', inline: true },
-        { name: 'Account created', value: `<t:${stamp(user.createdTimestamp)}:D>`, inline: true }
+        { name: '🆔 ID', value: user.id, inline: true },
+        { name: '🤖 Bot?', value: user.bot ? 'Yes' : 'No', inline: true },
+        {
+          name: '📅 Account created',
+          value: `<t:${stamp(user.createdTimestamp)}:D>\n<t:${stamp(user.createdTimestamp)}:R>`,
+          inline: true,
+        }
       );
+
+    if (banner) embed.setImage(banner);
+
+    // Profile badges
+    const badges = (user.flags?.toArray() ?? []).map((flag) => BADGES[flag]).filter(Boolean);
+    if (badges.length) embed.addFields({ name: '🏅 Badges', value: badges.join('\n') });
 
     if (member) {
+      if (member.joinedTimestamp) {
+        embed.addFields({
+          name: '📥 Joined this server',
+          value: `<t:${stamp(member.joinedTimestamp)}:D>\n<t:${stamp(member.joinedTimestamp)}:R>`,
+          inline: true,
+        });
+      }
+      if (member.nickname) {
+        embed.addFields({ name: '✏️ Nickname', value: member.nickname, inline: true });
+      }
+      if (member.premiumSinceTimestamp) {
+        embed.addFields({
+          name: '🚀 Boosting since',
+          value: `<t:${stamp(member.premiumSinceTimestamp)}:D>`,
+          inline: true,
+        });
+      }
+
+      // Roles, highest first.
       const roles = member.roles.cache
         .filter((r) => r.id !== interaction.guildId)
-        .sort((a, b) => b.position - a.position)
-        .first(10)
-        .map((r) => r.toString());
+        .sort((a, b) => b.position - a.position);
+      if (roles.size) {
+        const shown = [...roles.values()].slice(0, 10).map((r) => r.toString());
+        const extra = roles.size > 10 ? ` +${roles.size - 10} more` : '';
+        embed.addFields({ name: `🎭 Roles (${roles.size})`, value: shown.join(' ') + extra });
+      } else {
+        embed.addFields({ name: '🎭 Roles', value: 'None' });
+      }
 
-      embed.addFields(
-        { name: 'Joined this server', value: member.joinedTimestamp ? `<t:${stamp(member.joinedTimestamp)}:D>` : 'Unknown', inline: true },
-        { name: 'Roles', value: roles.length ? roles.join(' ') : 'None' }
-      );
+      // Key permissions
+      const key = [];
+      if (member.id === interaction.guild.ownerId) key.push('👑 Server Owner');
+      if (member.permissions.has(PermissionFlagsBits.Administrator)) {
+        key.push('Administrator');
+      } else {
+        for (const [flag, name] of KEY_PERMISSIONS) {
+          if (member.permissions.has(flag)) key.push(name);
+        }
+      }
+      if (key.length) embed.addFields({ name: '🔑 Key permissions', value: key.join(', ') });
+
+      // Active timeout
+      if (member.communicationDisabledUntilTimestamp > Date.now()) {
+        embed.addFields({
+          name: '⏳ Timed out',
+          value: `Until <t:${stamp(member.communicationDisabledUntilTimestamp)}:R>`,
+        });
+      }
     } else {
       embed.setFooter({ text: 'This person is not in this server.' });
     }
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.reply({
+      embeds: [embed],
+      components: linkButtons([
+        ['Avatar', avatar],
+        ['Banner', banner],
+      ]),
+    });
   },
 };
 
