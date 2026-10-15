@@ -1,5 +1,6 @@
 
 const store = require('./store');
+const xp = require('./xp');
 
 const QUESTS = [
   {
@@ -23,11 +24,9 @@ const QUESTS = [
 function getPeriodKey(type, now = new Date()) {
   const date = new Date(now);
   const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
 
   if (type === 'daily') {
-    return `${year}-${month}-${day}`;
+    return `${year}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 
   if (type !== 'weekly') {
@@ -38,16 +37,11 @@ function getPeriodKey(type, now = new Date()) {
     Date.UTC(year, date.getUTCMonth(), date.getUTCDate())
   );
 
-  const dayOfWeek = monday.getUTCDay();
   monday.setUTCDate(
-    monday.getUTCDate() - ((dayOfWeek + 6) % 7)
+    monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7)
   );
 
-  return `${monday.getUTCFullYear()}-${String(
-    monday.getUTCMonth() + 1
-  ).padStart(2, '0')}-${String(
-    monday.getUTCDate()
-  ).padStart(2, '0')}`;
+  return `${monday.getUTCFullYear()}-${String(monday.getUTCMonth() + 1).padStart(2, '0')}-${String(monday.getUTCDate()).padStart(2, '0')}`;
 }
 
 function readAll() {
@@ -123,9 +117,54 @@ function getQuests(guildId, userId, now = new Date()) {
   });
 }
 
+function claimQuest(guildId, userId, questId, now = new Date()) {
+  const quest = QUESTS.find((item) => item.id === questId);
+
+  if (!quest) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  const all = readAll();
+  const record = all[guildId]?.[userId] || {};
+  const current = getCurrentProgress(record, quest, now);
+
+  if (current.progress < quest.target) {
+    return { success: false, reason: 'incomplete' };
+  }
+
+  if (current.claimed) {
+    return { success: false, reason: 'claimed' };
+  }
+
+  all[guildId] ??= {};
+  all[guildId][userId] ??= {};
+
+  all[guildId][userId][quest.id] = {
+    period: current.period,
+    progress: current.progress,
+    claimed: true,
+  };
+
+  // Save the claim before awarding XP to prevent repeat claims.
+  store.write('quests', all);
+
+  const xpResult = xp.addBonusXp(
+    guildId,
+    userId,
+    quest.rewardXp
+  );
+
+  return {
+    success: true,
+    quest,
+    xpResult,
+  };
+}
+
 module.exports = {
   QUESTS,
   getPeriodKey,
   recordMessage,
   getQuests,
+  claimQuest,
 };
