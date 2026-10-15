@@ -1,3 +1,4 @@
+// utils/modLog.js - sends an entry to the server's moderation log channel.
 
 const { EmbedBuilder } = require('discord.js');
 const { getGuildConfig } = require('./configStore');
@@ -11,7 +12,7 @@ async function sendModLog(guild, details) {
     if (!channel || !channel.isTextBased() || channel.isDMBased()) return;
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
+      .setColor(details.color ?? 0x5865f2)
       .setTitle(details.title)
       .setDescription(details.description)
       .setTimestamp();
