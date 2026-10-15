@@ -7,7 +7,24 @@ const {
   ButtonStyle,
   MessageFlags,
 } = require('discord.js');
+
 const quests = require('../utils/quests');
+
+function makeProgressBar(progress, target, size = 12) {
+  const ratio = target > 0
+    ? Math.min(1, Math.max(0, progress / target))
+    : 0;
+
+  const filled = Math.round(ratio * size);
+
+  return `\`${'▰'.repeat(filled)}${'▱'.repeat(size - filled)}\``;
+}
+
+function getQuestStatus(quest) {
+  if (quest.claimed) return '✅ **Reward claimed**';
+  if (quest.completed) return '🏆 **Complete — claim your reward!**';
+  return '⏳ **In progress**';
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -27,54 +44,87 @@ module.exports = {
       interaction.user.id
     );
 
-    const description = memberQuests.map((quest) => {
-      const length = 10;
-      const filled = Math.max(
-        0,
-        Math.min(
-          length,
-          Math.round((quest.progress / quest.target) * length)
-        )
-      );
+    const completedCount = memberQuests.filter(
+      (quest) => quest.completed
+    ).length;
 
-      const bar =
-        '▰'.repeat(filled) + '▱'.repeat(length - filled);
+    const claimedCount = memberQuests.filter(
+      (quest) => quest.claimed
+    ).length;
 
-      const status = quest.claimed
-        ? '✅ Reward claimed'
-        : quest.completed
-          ? '🏆 Ready to claim'
-          : '⏳ In progress';
-
-      return [
-        `**${quest.name}** (${quest.type})`,
-        quest.description,
-        `${bar} **${quest.progress}/${quest.target}**`,
-        `Reward: **${quest.rewardXp} XP** · ${status}`,
-      ].join('\n');
-    }).join('\n\n');
+    const availableRewards = memberQuests
+      .filter((quest) => quest.completed && !quest.claimed)
+      .reduce((total, quest) => total + quest.rewardXp, 0);
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
+      .setColor(0x5865F2)
+      .setAuthor({
+        name: 'MF BOT  •  QUEST BOARD',
+        iconURL: interaction.client.user.displayAvatarURL(),
+      })
       .setTitle('📜 Your Quests')
-      .setDescription(
-        description || 'There are no quests available right now.'
-      )
-      .setFooter({
-        text: 'Daily quests reset each UTC day; weekly quests reset each Monday UTC.',
-      });
+      .setDescription([
+        'Complete challenges by chatting in the server and earn bonus XP.',
+        '',
+        '━━━━━━━━━━━━━━━━━━━━',
+        `**QUESTS COMPLETED**`,
+        `\`${completedCount}/${memberQuests.length}\` completed  •  \`${claimedCount}\` rewards claimed`,
+        '',
+        availableRewards > 0
+          ? `🎁 **${availableRewards} XP ready to collect!**`
+          : '💬 Keep chatting to unlock your next reward.',
+        '━━━━━━━━━━━━━━━━━━━━',
+      ].join('\n'));
 
-    const buttons = memberQuests.map((quest) =>
-      new ButtonBuilder()
+    for (const quest of memberQuests) {
+      const isDaily = quest.type === 'daily';
+      const progress = Math.min(quest.progress, quest.target);
+      const percentage = Math.floor(
+        (progress / quest.target) * 100
+      );
+
+      embed.addFields({
+        name: `${isDaily ? '☀️' : '🗓️'} ${quest.name}  ·  ${isDaily ? 'DAILY' : 'WEEKLY'}`,
+        value: [
+          quest.description,
+          '',
+          `${makeProgressBar(progress, quest.target)} **${progress}/${quest.target}**`,
+          `📊 Progress: **${percentage}%**`,
+          `🎁 Reward: **${quest.rewardXp} XP**`,
+          getQuestStatus(quest),
+        ].join('\n'),
+        inline: false,
+      });
+    }
+
+    embed.setFooter({
+      text: 'Daily reset: 00:00 UTC  •  Weekly reset: Monday 00:00 UTC',
+    });
+
+    const buttons = memberQuests.map((quest) => {
+      let label;
+      let style;
+      let disabled = false;
+
+      if (quest.claimed) {
+        label = `${quest.name} — Claimed`;
+        style = ButtonStyle.Secondary;
+        disabled = true;
+      } else if (quest.completed) {
+        label = `Claim ${quest.rewardXp} XP`;
+        style = ButtonStyle.Success;
+      } else {
+        label = `${quest.progress}/${quest.target} • ${quest.rewardXp} XP`;
+        style = ButtonStyle.Secondary;
+        disabled = true;
+      }
+
+      return new ButtonBuilder()
         .setCustomId(`quest:claim:${quest.id}`)
-        .setLabel(
-          quest.claimed
-            ? `${quest.name} — Claimed`
-            : `Claim: ${quest.name}`
-        )
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(!quest.completed || quest.claimed)
-    );
+        .setLabel(label)
+        .setStyle(style)
+        .setDisabled(disabled);
+    });
 
     const rows = [];
 
@@ -86,7 +136,7 @@ module.exports = {
       );
     }
 
-    await interaction.reply({
+    return interaction.reply({
       embeds: [embed],
       components: rows,
     });
