@@ -1,5 +1,4 @@
-
- // MF Bot Dashboard — Discord OAuth control panel.
+// MF Bot Dashboard — Discord OAuth control panel.
 // Uses the project's existing config, ticket, and level-reward stores.
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -326,27 +325,37 @@ function makeDashboard(client, options = {}) {
     res.end();
   };
 
+  // Limit form size without abruptly destroying the request connection.
   function readForm(req) {
     return new Promise((resolve, reject) => {
       let size = 0;
+      let tooLarge = false;
       const chunks = [];
 
-      req.on('data', (c) => {
-        size += c.length;
+      req.on('data', (chunk) => {
+        if (tooLarge) return;
+
+        size += chunk.length;
 
         if (size > 20000) {
-          reject(new Error('Form too large'));
-          req.destroy();
-        } else {
-          chunks.push(c);
+          tooLarge = true;
+          chunks.length = 0;
+          reject(Object.assign(new Error('Form too large'), { statusCode: 413 }));
+          return;
         }
+
+        chunks.push(chunk);
       });
 
       req.on('end', () => {
-        resolve(new URLSearchParams(Buffer.concat(chunks).toString('utf8')));
+        if (!tooLarge) {
+          resolve(new URLSearchParams(Buffer.concat(chunks).toString('utf8')));
+        }
       });
 
-      req.on('error', reject);
+      req.on('error', (error) => {
+        if (!tooLarge) reject(error);
+      });
     });
   }
 
@@ -680,6 +689,23 @@ function makeDashboard(client, options = {}) {
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
+      // Return a proper client error when a submitted form exceeds 20 KB.
+      if (error.statusCode === 413) {
+        if (!res.headersSent) {
+          send(
+            res,
+            413,
+            notice(
+              'Request too large',
+              'The submitted form was too large. Please go back and try again.'
+            )
+          );
+        } else {
+          res.end();
+        }
+        return;
+      }
+
       console.error('Dashboard error:', error.message);
 
       if (!res.headersSent) {
