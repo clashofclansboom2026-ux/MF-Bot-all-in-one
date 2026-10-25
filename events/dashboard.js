@@ -1,5 +1,5 @@
 
-// MF Bot Dashboard — Discord OAuth control panel.
+ // MF Bot Dashboard — Discord OAuth control panel.
 // Uses the project's existing config, ticket, and level-reward stores.
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -615,54 +615,53 @@ function makeDashboard(client, options = {}) {
         const channel = channelById(channelId);
         const rewardLevelRaw = form.get('rewardLevel') || '';
         const rewardRoleId = form.get('rewardRoleId') || '';
+        const rewardRole = rewardRoleId
+          ? guild.roles.cache.get(rewardRoleId)
+          : null;
 
-        if (channelId && !channel) {
-          return send(
-            res,
-            400,
-            guildPage(session, guild, {
-              ok: false,
-              text: 'Invalid level announcement channel. Nothing was saved.',
-            })
-          );
-        }
+        const rewardLevelInvalid =
+          rewardLevelRaw !== '' &&
+          (!/^\d+$/.test(rewardLevelRaw) ||
+            Number(rewardLevelRaw) < 1 ||
+            Number(rewardLevelRaw) > 10000);
+
+        const rewardSelectionIncomplete =
+          (rewardLevelRaw !== '' && rewardRoleId === '') ||
+          (rewardLevelRaw === '' && rewardRoleId !== '');
+
+        const rewardRoleInvalid =
+          rewardRoleId !== '' &&
+          (!rewardRole || rewardRole.managed || rewardRole.id === guild.id);
 
         if (
-          (rewardLevelRaw && !/^\d+$/.test(rewardLevelRaw)) ||
-          (rewardLevelRaw && (Number(rewardLevelRaw) < 1 || Number(rewardLevelRaw) > 10000)) ||
-          (rewardRoleId && !guild.roles.cache.has(rewardRoleId))
+          (channelId && !channel) ||
+          rewardLevelInvalid ||
+          rewardSelectionIncomplete ||
+          rewardRoleInvalid
         ) {
           return send(
             res,
             400,
             guildPage(session, guild, {
               ok: false,
-              text: 'Invalid reward level or role. Nothing was saved.',
+              text: 'Invalid level setting. Choose a valid channel and, if changing a reward, provide both a level and a normal server role. Nothing was saved.',
             })
           );
         }
 
+        // Validate every submitted value before changing any saved setting.
         levelRewards.setChannel(guild.id, channel?.id || null);
         levelRewards.setAnnouncementsEnabled(
           guild.id,
           form.get('announcementsEnabled') === 'yes'
         );
 
-        if (rewardLevelRaw && rewardRoleId) {
-          const role = guild.roles.cache.get(rewardRoleId);
-
-          if (!role || role.managed || role.id === guild.id) {
-            return send(
-              res,
-              400,
-              guildPage(session, guild, {
-                ok: false,
-                text: 'Choose a normal server role for the reward.',
-              })
-            );
-          }
-
-          levelRewards.setReward(guild.id, Number(rewardLevelRaw), role.id);
+        if (rewardLevelRaw && rewardRole) {
+          levelRewards.setReward(
+            guild.id,
+            Number(rewardLevelRaw),
+            rewardRole.id
+          );
         }
 
         return send(
