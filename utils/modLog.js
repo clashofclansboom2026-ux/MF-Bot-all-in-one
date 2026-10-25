@@ -1,4 +1,5 @@
-// utils/modLog.js - sends an entry to the server's moderation log channel.
+
+ // utils/modLog.js - sends an entry to the server's moderation log channel.
 
 const { EmbedBuilder } = require('discord.js');
 const { getGuildConfig } = require('./configStore');
@@ -21,7 +22,11 @@ async function sendModLog(guild, details) {
       embed.setFooter({ text: details.footer });
     }
 
-    await channel.send({ embeds: [embed] });
+    // Moderation logs should never ping users, roles, or everyone.
+    await channel.send({
+      embeds: [embed],
+      allowedMentions: { parse: [] },
+    });
   } catch (error) {
     console.error('Failed to send moderation log:', error);
   }
