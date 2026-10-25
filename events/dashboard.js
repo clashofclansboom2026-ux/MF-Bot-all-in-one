@@ -1,5 +1,4 @@
-// MF Bot Dashboard — Discord OAuth control panel.
-// Uses the project's existing config, ticket, and level-reward stores.
+
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Events, ChannelType, PermissionFlagsBits } = require('discord.js');
@@ -136,8 +135,9 @@ function makeDashboard(client, options = {}) {
   const css = `
   :root{color-scheme:dark;--bg:#070a12;--panel:#101727;--panel2:#0c1220;--line:#25324b;--text:#edf3ff;--muted:#9aa8c0;--blue:#347eff;--cyan:#65bdff;--ok:#36c98f;--bad:#ff6875}
   *{box-sizing:border-box}
+  html{scroll-behavior:smooth;scroll-padding-top:20px}
   body{margin:0;background:radial-gradient(900px 420px at 50% -100px,#142c54 0,transparent 70%),var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-  main{max-width:1040px;margin:auto;padding:0 18px 60px}
+  main{max-width:1180px;margin:auto;padding:0 22px 60px}
   header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0;border-bottom:1px solid var(--line)}
   .brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--text);font-weight:800;font-size:1.1rem}
   .logo{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(145deg,#398cff,#10254b);box-shadow:0 0 24px #347eff30;font-weight:900;font-size:1.25rem}
@@ -165,7 +165,7 @@ function makeDashboard(client, options = {}) {
   .notice.bad{border-color:#6b3440;background:#2b141b}
   .serverlist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:0;list-style:none}
   .serverlist a{display:block;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px;color:var(--text);text-decoration:none}
-  .serverlist a:hover{border-color:var(--blue)}
+  .serverlist a:hover{border-color:var(--blue);transform:translateY(-1px)}
   .crumb{display:inline-block;margin-top:18px;color:var(--cyan);text-decoration:none}
   .pill{display:inline-block;padding:3px 8px;border:1px solid var(--line);border-radius:99px;color:var(--muted);font-size:.8rem}
   .checkbox{display:flex;align-items:center;gap:10px}
@@ -173,8 +173,46 @@ function makeDashboard(client, options = {}) {
   .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
   .rewardlist{margin:10px 0;padding:0;list-style:none}
   .rewardlist li{padding:8px 0;border-bottom:1px solid var(--line)}
-  footer{color:var(--muted);font-size:.82rem;padding:20px 0;text-align:center}
-  @media(max-width:680px){.grid,.serverlist,.row{grid-template-columns:1fr}main{padding:0 12px 40px}.card{padding:16px}.hero{padding:18px}}
+  footer{color:var(--muted);font-size:.82rem;padding:24px 0;text-align:center}
+  .settings-intro{margin-bottom:12px}
+  .settings-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:20px 0}
+  .overview-link{display:flex;align-items:center;gap:13px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,#111c30,#0b111d);color:var(--text);text-decoration:none;transition:border-color .15s,transform .15s}
+  .overview-link:hover{border-color:var(--blue);transform:translateY(-2px)}
+  .overview-icon{display:grid;place-items:center;flex:0 0 42px;width:42px;height:42px;border-radius:12px;background:#14294a;border:1px solid #294b7b;font-size:1.2rem}
+  .overview-link strong{display:block;margin-bottom:2px}
+  .overview-link span{display:block;color:var(--muted);font-size:.82rem}
+  .settings-layout{display:grid;grid-template-columns:210px minmax(0,1fr);gap:22px;align-items:start;margin-top:18px}
+  .settings-nav{position:sticky;top:16px;border:1px solid var(--line);border-radius:15px;background:#0c1220;padding:10px}
+  .settings-nav .nav-title{padding:10px 11px 12px;color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+  .settings-nav a{display:flex;align-items:center;gap:10px;padding:11px;border-radius:9px;color:#cbd8ed;text-decoration:none;font-weight:650;margin:3px 0;transition:background .15s,color .15s}
+  .settings-nav a:hover,.settings-nav a:focus{background:#172746;color:#fff;outline:none}
+  .nav-number{display:grid;place-items:center;width:28px;height:28px;flex:0 0 28px;border:1px solid #34517c;border-radius:8px;color:var(--cyan);font-size:.78rem}
+  .settings-content{min-width:0}
+  .settings-section{scroll-margin-top:20px}
+  .settings-section .card{margin:0 0 18px}
+  .settings-section button{margin-top:6px}
+  .section-kicker{font-size:.76rem;text-transform:uppercase;letter-spacing:.1em;color:var(--cyan);font-weight:800;margin-bottom:4px}
+  .more-card{border-style:dashed;background:#0b111d}
+  @media(max-width:760px){
+    main{padding:0 14px 40px}
+    .settings-layout{grid-template-columns:1fr;gap:12px}
+    .settings-nav{position:static;display:flex;gap:4px;overflow-x:auto;white-space:nowrap;padding:8px;scrollbar-width:thin}
+    .settings-nav .nav-title{display:none}
+    .settings-nav a{flex:0 0 auto;padding:9px}
+    .settings-nav a span:last-child{font-size:.9rem}
+    .settings-overview{grid-template-columns:1fr;gap:8px}
+    .overview-link{padding:12px}
+    .settings-section{scroll-margin-top:12px}
+  }
+  @media(max-width:680px){
+    .grid,.serverlist,.row{grid-template-columns:1fr}
+    main{padding:0 12px 40px}
+    .card{padding:16px}
+    .hero{padding:18px}
+    header{gap:10px}
+    .brand{font-size:.95rem}
+    .logo{width:36px;height:36px}
+  }
   `;
 
   const page = (title, body, session) =>
@@ -232,64 +270,91 @@ function makeDashboard(client, options = {}) {
       guild.name,
       `<a class="crumb" href="/">← All servers</a>
       <h1>${esc(guild.name)}</h1>
-      <p class="muted">Manage the settings currently supported by MF Bot. Choose Save in each section to apply its changes.</p>
+      <p class="muted settings-intro">Your server control centre. Choose a section below, adjust its settings, and save that section. Each section saves independently.</p>
       ${messageHtml}
+      <div class="settings-overview" aria-label="Settings sections">
+        <a class="overview-link" href="#moderation"><span class="overview-icon">🛡️</span><span><strong>Moderation</strong><span>Anti-spam and log channel</span></span></a>
+        <a class="overview-link" href="#tickets"><span class="overview-icon">🎫</span><span><strong>Ticket system</strong><span>Category, staff and limits</span></span></a>
+        <a class="overview-link" href="#levels"><span class="overview-icon">⭐</span><span><strong>Levels & XP</strong><span>Announcements and rewards</span></span></a>
+      </div>
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Settings navigation">
+          <div class="nav-title">Server settings</div>
+          <a href="#moderation"><span class="nav-number">01</span><span>Moderation</span></a>
+          <a href="#tickets"><span class="nav-number">02</span><span>Ticket system</span></a>
+          <a href="#levels"><span class="nav-number">03</span><span>Levels & XP</span></a>
+          <a href="#more"><span class="nav-number">04</span><span>More features</span></a>
+        </nav>
+        <div class="settings-content">
+          <form method="post" action="/guild/${esc(guild.id)}/moderation">
+            <input type="hidden" name="csrf" value="${csrfFor(session)}">
+            <section class="settings-section" id="moderation">
+              <div class="card">
+                <div class="section-kicker">01 · Moderation</div>
+                <div class="cardhead"><span class="icon">🛡️</span><div><h2>Moderation & security</h2><p class="muted">Choose the moderation log channel and tune anti-spam protection.</p></div></div>
+                <div class="field">
+                  <label for="logChannel">Moderation log channel</label>
+                  <select id="logChannel" name="logChannel">${channelOptions(config.modLogChannelId)}</select>
+                  <small>Set to Off to disable moderation log delivery.</small>
+                </div>
+                <div class="row">
+                  <div class="field"><label for="messages">Message limit</label><input id="messages" name="messages" type="number" min="2" max="10" value="${messages}" required><small>2–10 messages</small></div>
+                  <div class="field"><label for="window">Time window (seconds)</label><input id="window" name="window" type="number" min="3" max="30" value="${windowSec}" required><small>3–30 seconds</small></div>
+                </div>
+                <div class="field"><label for="timeout">Timeout duration (minutes)</label><input id="timeout" name="timeout" type="number" min="1" max="1440" value="${timeoutMin}" required><small>1 minute to 24 hours</small></div>
+                <button>Save moderation settings</button>
+              </div>
+            </section>
+          </form>
 
-      <form method="post" action="/guild/${esc(guild.id)}/moderation">
-        <input type="hidden" name="csrf" value="${csrfFor(session)}">
-        <section class="card">
-          <div class="cardhead"><span class="icon">01</span><div><h2>Moderation & security</h2><p class="muted">Choose the moderation log channel and tune anti-spam protection.</p></div></div>
-          <div class="field">
-            <label for="logChannel">Moderation log channel</label>
-            <select id="logChannel" name="logChannel">${channelOptions(config.modLogChannelId)}</select>
-            <small>Set to Off to disable moderation log delivery.</small>
-          </div>
-          <div class="row">
-            <div class="field"><label for="messages">Message limit</label><input id="messages" name="messages" type="number" min="2" max="10" value="${messages}" required><small>2–10 messages</small></div>
-            <div class="field"><label for="window">Time window (seconds)</label><input id="window" name="window" type="number" min="3" max="30" value="${windowSec}" required><small>3–30 seconds</small></div>
-          </div>
-          <div class="field"><label for="timeout">Timeout duration (minutes)</label><input id="timeout" name="timeout" type="number" min="1" max="1440" value="${timeoutMin}" required><small>1 minute to 24 hours</small></div>
-          <button>Save moderation settings</button>
-        </section>
-      </form>
+          <form method="post" action="/guild/${esc(guild.id)}/tickets">
+            <input type="hidden" name="csrf" value="${csrfFor(session)}">
+            <section class="settings-section" id="tickets">
+              <div class="card">
+                <div class="section-kicker">02 · Tickets</div>
+                <div class="cardhead"><span class="icon">🎫</span><div><h2>Ticket system</h2><p class="muted">Edit the existing ticket settings used by MF Bot. This does not create or repost a ticket panel.</p></div></div>
+                <div class="row">
+                  <div class="field"><label for="ticketCategory">Ticket category</label><select id="ticketCategory" name="categoryId">${categoryOptions(ticket.categoryId)}</select></div>
+                  <div class="field"><label for="ticketMax">Maximum open tickets per user</label><input id="ticketMax" name="maxOpenPerUser" type="number" min="1" max="20" value="${Number.isInteger(ticket.maxOpenPerUser) ? ticket.maxOpenPerUser : 3}" required></div>
+                </div>
+                <div class="field"><label for="ticketLog">Ticket log channel</label><select id="ticketLog" name="ticketLogChannelId">${channelOptions(ticket.logChannelId)}</select></div>
+                <div class="field"><label for="panelChannel">Existing ticket panel channel</label><select id="panelChannel" name="panelChannelId">${channelOptions(ticket.panelChannelId)}</select><small>This saves the panel channel setting only; it does not publish a new panel.</small></div>
+                <div class="field"><label for="staffRoles">Staff roles</label><select id="staffRoles" name="staffRoleIds" multiple>${roleOptions(Array.isArray(ticket.staffRoleIds) ? ticket.staffRoleIds : [])}</select><small>On a phone, tap to select or deselect roles.</small></div>
+                <div class="field"><label for="supportRoles">Support roles</label><select id="supportRoles" name="supportRoleIds" multiple>${roleOptions(Array.isArray(ticket.supportRoleIds) ? ticket.supportRoleIds : [])}</select></div>
+                <button>Save ticket settings</button>
+              </div>
+            </section>
+          </form>
 
-      <form method="post" action="/guild/${esc(guild.id)}/tickets">
-        <input type="hidden" name="csrf" value="${csrfFor(session)}">
-        <section class="card">
-          <div class="cardhead"><span class="icon">02</span><div><h2>Ticket system</h2><p class="muted">Edit the existing ticket settings used by MF Bot. This does not create or repost a ticket panel.</p></div></div>
-          <div class="row">
-            <div class="field"><label for="ticketCategory">Ticket category</label><select id="ticketCategory" name="categoryId">${categoryOptions(ticket.categoryId)}</select></div>
-            <div class="field"><label for="ticketMax">Maximum open tickets per user</label><input id="ticketMax" name="maxOpenPerUser" type="number" min="1" max="20" value="${Number.isInteger(ticket.maxOpenPerUser) ? ticket.maxOpenPerUser : 3}" required></div>
-          </div>
-          <div class="field"><label for="ticketLog">Ticket log channel</label><select id="ticketLog" name="ticketLogChannelId">${channelOptions(ticket.logChannelId)}</select></div>
-          <div class="field"><label for="panelChannel">Existing ticket panel channel</label><select id="panelChannel" name="panelChannelId">${channelOptions(ticket.panelChannelId)}</select><small>This saves the panel channel setting only; it does not publish a new panel.</small></div>
-          <div class="field"><label for="staffRoles">Staff roles</label><select id="staffRoles" name="staffRoleIds" multiple>${roleOptions(Array.isArray(ticket.staffRoleIds) ? ticket.staffRoleIds : [])}</select><small>On a phone, tap to select or deselect roles.</small></div>
-          <div class="field"><label for="supportRoles">Support roles</label><select id="supportRoles" name="supportRoleIds" multiple>${roleOptions(Array.isArray(ticket.supportRoleIds) ? ticket.supportRoleIds : [])}</select></div>
-          <button>Save ticket settings</button>
-        </section>
-      </form>
+          <form method="post" action="/guild/${esc(guild.id)}/levels">
+            <input type="hidden" name="csrf" value="${csrfFor(session)}">
+            <section class="settings-section" id="levels">
+              <div class="card">
+                <div class="section-kicker">03 · Progression</div>
+                <div class="cardhead"><span class="icon">⭐</span><div><h2>Levels & XP</h2><p class="muted">Configure where level-up announcements are sent and manage the role reward mapping.</p></div></div>
+                <div class="field"><label for="levelChannel">Level-up announcement channel</label><select id="levelChannel" name="levelChannelId">${channelOptions(level.channelId)}</select></div>
+                <label class="checkbox"><input type="checkbox" name="announcementsEnabled" value="yes"${level.announcementsEnabled ? ' checked' : ''}> Enable level-up announcements</label>
+                <hr style="border:0;border-top:1px solid var(--line);margin:20px 0">
+                <h2>Add or update a level role reward</h2>
+                <p class="muted">Choose a level and role. Existing rewards for other levels will be kept.</p>
+                <div class="row">
+                  <div class="field"><label for="rewardLevel">Level</label><input id="rewardLevel" name="rewardLevel" type="number" min="1" max="10000" placeholder="e.g. 10"></div>
+                  <div class="field"><label for="rewardRoleId">Role reward</label><select id="rewardRoleId" name="rewardRoleId"><option value="">Do not change rewards</option>${roleOptions([])}</select></div>
+                </div>
+                ${rewardEntries.length ? `<h2>Current rewards</h2><ul class="rewardlist">${rewardEntries.map(([lv, id]) => `<li><strong>Level ${esc(lv)}</strong> — ${esc(guild.roles.cache.get(id)?.name || 'Deleted role')}</li>`).join('')}</ul>` : '<p class="muted">No level role rewards are configured yet.</p>'}
+                <button>Save level settings</button>
+              </div>
+            </section>
+          </form>
 
-      <form method="post" action="/guild/${esc(guild.id)}/levels">
-        <input type="hidden" name="csrf" value="${csrfFor(session)}">
-        <section class="card">
-          <div class="cardhead"><span class="icon">03</span><div><h2>Levels & XP</h2><p class="muted">Configure where level-up announcements are sent and manage the role reward mapping.</p></div></div>
-          <div class="field"><label for="levelChannel">Level-up announcement channel</label><select id="levelChannel" name="levelChannelId">${channelOptions(level.channelId)}</select></div>
-          <label class="checkbox"><input type="checkbox" name="announcementsEnabled" value="yes"${level.announcementsEnabled ? ' checked' : ''}> Enable level-up announcements</label>
-          <hr style="border:0;border-top:1px solid var(--line);margin:20px 0">
-          <h2>Add or update a level role reward</h2>
-          <p class="muted">Choose a level and role. Existing rewards for other levels will be kept.</p>
-          <div class="row">
-            <div class="field"><label for="rewardLevel">Level</label><input id="rewardLevel" name="rewardLevel" type="number" min="1" max="10000" placeholder="e.g. 10"></div>
-            <div class="field"><label for="rewardRoleId">Role reward</label><select id="rewardRoleId" name="rewardRoleId"><option value="">Do not change rewards</option>${roleOptions([])}</select></div>
-          </div>
-          ${rewardEntries.length ? `<h2>Current rewards</h2><ul class="rewardlist">${rewardEntries.map(([lv, id]) => `<li><strong>Level ${esc(lv)}</strong> — ${esc(guild.roles.cache.get(id)?.name || 'Deleted role')}</li>`).join('')}</ul>` : '<p class="muted">No level role rewards are configured yet.</p>'}
-          <button>Save level settings</button>
-        </section>
-      </form>
-
-      <section class="card">
-        <div class="cardhead"><span class="icon">04</span><div><h2>More features</h2><p class="muted">This dashboard only shows controls connected to working settings in your current project. Welcome-message editing and additional feature controls need their own settings integrations before they can be safely exposed here.</p></div></div>
-      </section>`,
+          <section class="settings-section" id="more">
+            <div class="card more-card">
+              <div class="section-kicker">Coming next</div>
+              <div class="cardhead"><span class="icon">＋</span><div><h2>More features</h2><p class="muted">Welcome-message editing and additional feature controls need their own settings integrations before they can safely be exposed here. This section will grow as those settings are connected.</p></div></div>
+            </div>
+          </section>
+        </div>
+      </div>`,
       session
     );
   }
