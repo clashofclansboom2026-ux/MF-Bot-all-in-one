@@ -1,4 +1,3 @@
-
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Events, ChannelType, PermissionFlagsBits } = require('discord.js');
@@ -703,9 +702,21 @@ function makeDashboard(client, options = {}) {
           (rewardLevelRaw !== '' && rewardRoleId === '') ||
           (rewardLevelRaw === '' && rewardRoleId !== '');
 
+        // Only fetch the bot member when a role reward is being changed.
+        const botMember = rewardRoleId
+          ? await guild.members.fetchMe().catch(() => null)
+          : null;
+
         const rewardRoleInvalid =
           rewardRoleId !== '' &&
-          (!rewardRole || rewardRole.managed || rewardRole.id === guild.id);
+          (
+            !rewardRole ||
+            rewardRole.managed ||
+            rewardRole.id === guild.id ||
+            !botMember ||
+            !botMember.permissions.has(PermissionFlagsBits.ManageRoles) ||
+            rewardRole.position >= botMember.roles.highest.position
+          );
 
         if (
           (channelId && !channel) ||
@@ -718,7 +729,7 @@ function makeDashboard(client, options = {}) {
             400,
             guildPage(session, guild, {
               ok: false,
-              text: 'Invalid level setting. Choose a valid channel and, if changing a reward, provide both a level and a normal server role. Nothing was saved.',
+              text: 'Invalid level setting. Choose a valid channel and, if changing a reward, provide both a level and a normal server role below MF Bot’s highest role. MF Bot must also have Manage Roles permission. Nothing was saved.',
             })
           );
         }
