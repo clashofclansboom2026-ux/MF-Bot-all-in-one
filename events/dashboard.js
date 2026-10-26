@@ -7,6 +7,7 @@ const { getGuildConfig, setGuildConfig } = require('../utils/configStore');
 const { sendModLog } = require('../utils/modLog');
 const tickets = require('../utils/tickets');
 const levelRewards = require('../utils/levelRewards');
+const applications = require('../utils/applications');
 
 const API = 'https://discord.com/api/v10';
 const SESSION_HOURS = 12;
@@ -193,6 +194,23 @@ function makeDashboard(client, options = {}) {
   .settings-section button{margin-top:6px}
   .section-kicker{font-size:.76rem;text-transform:uppercase;letter-spacing:.1em;color:var(--cyan);font-weight:800;margin-bottom:4px}
   .more-card{border-style:dashed;background:#0b111d}
+  .rolegrid{display:flex;flex-wrap:wrap;gap:8px;max-height:230px;overflow:auto;padding:10px;border:1px solid #30405d;border-radius:10px;background:#080e19}
+  .rolechip{display:flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:#101727;font-size:.85rem;cursor:pointer}
+  .rolechip input{width:auto;margin:0;accent-color:var(--blue)}
+  .rolechip:has(input:checked){border-color:var(--blue);background:#15284a;color:#fff}
+  textarea{width:100%;padding:11px 12px;border:1px solid #30405d;border-radius:10px;background:#080e19;color:var(--text);font:inherit;min-height:88px;resize:vertical}
+  textarea:focus{outline:2px solid var(--blue);border-color:var(--blue)}
+  .formcard{border:1px solid var(--line);border-radius:14px;padding:18px;margin:16px 0;background:#0c1220}
+  .formcard summary{cursor:pointer;color:var(--cyan);font-weight:750;list-style:none}
+  .formcard summary::-webkit-details-marker{display:none}
+  .formcard summary::before{content:'▸ ';display:inline-block}
+  .formcard[open] summary::before{content:'▾ '}
+  .formhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .badge{padding:3px 10px;border-radius:999px;font-size:.76rem;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .badge.on{color:#36c98f;border-color:#2d5e4c}
+  .badge.off{color:#ff6875;border-color:#6b3440}
+  .btn.danger,button.danger{background:transparent;color:#ff8890;border:1px solid #6b3440;box-shadow:none;font-weight:650}
+  .newformcard{border-style:dashed}
   @media(max-width:760px){
     main{padding:0 14px 40px}
     .settings-layout{grid-template-columns:1fr;gap:12px}
@@ -258,10 +276,71 @@ function makeDashboard(client, options = {}) {
     const roleOptions = (selected = []) =>
       roles.map((r) => `<option value="${esc(r.id)}"${selected.includes(r.id) ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
 
+    // A tappable grid of role chips. Much easier to use on a phone or tablet
+    // than a native multi-select box, which is awkward to operate by touch.
+    const roleGrid = (name, selected = []) =>
+      roles.length
+        ? `<div class="rolegrid">${roles.map((r) => `<label class="rolechip"><input type="checkbox" name="${name}" value="${esc(r.id)}"${selected.includes(r.id) ? ' checked' : ''}> ${esc(r.name)}</label>`).join('')}</div>`
+        : '<p class="muted">This server has no roles to choose from yet.</p>';
+
     const ticket = tickets.getSettings(guild.id);
     const ticketQuestions = tickets.getTicketQuestions(guild.id);
     const level = levelRewards.getSettings(guild.id);
     const rewardEntries = Object.entries(level.rewards).sort((a, b) => Number(a[0]) - Number(b[0]));
+    const forms = applications.listForms(guild.id);
+
+    // One editable card per existing application form, plus a blank "add new" card.
+    const applicationFormCard = (form) => {
+      const isNew = !form;
+      const id = form?.id || '';
+      const action = isNew
+        ? `/guild/${esc(guild.id)}/applications/create`
+        : `/guild/${esc(guild.id)}/applications/${esc(id)}/update`;
+      const questions = isNew ? [] : form.questions;
+
+      return `<details class="formcard${isNew ? ' newformcard' : ''}"${isNew ? '' : ' open'}>
+        <summary>${isNew ? '＋ Create a new application form' : `<span class="formhead"><span>${esc(form.name)}</span><span class="badge ${form.enabled ? 'on' : 'off'}">${form.enabled ? 'Accepting applications' : 'Closed'}</span></span>`}</summary>
+        <form method="post" action="${action}">
+          <input type="hidden" name="csrf" value="${csrfFor(session)}">
+          <div class="field"><label for="name${id}">Form name</label><input id="name${id}" name="name" maxlength="${applications.MAX_FORM_NAME_LENGTH}" value="${esc(form?.name || '')}" placeholder="e.g. Staff Application" required></div>
+          <div class="field"><label for="description${id}">Description (shown to you in the admin list only)</label><textarea id="description${id}" name="description" maxlength="1000" placeholder="What this application is for">${esc(form?.description || '')}</textarea></div>
+
+          <h2>Questions applicants answer</h2>
+          <p class="muted">Up to ${applications.MAX_QUESTIONS} questions, ${applications.MAX_QUESTION_LENGTH} characters each. Leave a box blank to remove that question.</p>
+          ${Array.from({ length: applications.MAX_QUESTIONS }, (_, index) => {
+            const q = questions[index] || { label: '', required: true };
+            const n = index + 1;
+            return `<div class="field">
+              <label for="q${id}_${n}">Question ${n}</label>
+              <input id="q${id}_${n}" name="questionLabel${n}" maxlength="${applications.MAX_QUESTION_LENGTH}" value="${esc(q.label)}" placeholder="${n === 1 ? 'Why do you want to join the team?' : 'Optional question'}">
+              <label class="checkbox"><input type="checkbox" name="questionRequired${n}" value="yes"${q.required !== false ? ' checked' : ''}> Required</label>
+            </div>`;
+          }).join('')}
+
+          <h2>Application panel</h2>
+          <p class="muted">The message members will see with the "apply" button, ready for when posting it in Discord is set up. Saving these now means nothing needs retyping later.</p>
+          <div class="field"><label for="panelTitle${id}">Panel title</label><input id="panelTitle${id}" name="panelTitle" maxlength="256" value="${esc(form?.panelTitle || '')}" placeholder="Defaults to the form name"></div>
+          <div class="field"><label for="panelDescription${id}">Panel description</label><textarea id="panelDescription${id}" name="panelDescription" maxlength="4000" placeholder="Click the button below to submit your application.">${esc(form?.panelDescription && form.panelDescription !== 'Click the button below to submit your application.' ? form.panelDescription : '')}</textarea></div>
+          <div class="row">
+            <div class="field"><label for="buttonLabel${id}">Button text</label><input id="buttonLabel${id}" name="buttonLabel" maxlength="80" value="${esc(form?.buttonLabel && form.buttonLabel !== 'Apply Now' ? form.buttonLabel : '')}" placeholder="Apply Now"></div>
+            <div class="field"><label for="embedColor${id}">Panel colour</label><input id="embedColor${id}" name="embedColor" type="color" value="${esc(form?.embedColor || '#347eff')}" style="padding:4px;height:44px"></div>
+          </div>
+
+          <h2>Reviewing applications</h2>
+          <div class="field"><label for="reviewChannel${id}">Send new applications to</label><select id="reviewChannel${id}" name="reviewChannelId">${channelOptions(form?.reviewChannelId || '')}</select></div>
+          <div class="field"><label>Roles who can review</label>${roleGrid('reviewerRoleIds', form?.reviewerRoleIds || [])}</div>
+          <label class="checkbox"><input type="checkbox" name="enabled" value="yes"${isNew || form.enabled !== false ? ' checked' : ''}> Accepting applications</label>
+
+          <div class="actions">
+            <button>${isNew ? 'Create form' : 'Save changes'}</button>
+          </div>
+        </form>
+        ${isNew ? '' : `<form method="post" action="/guild/${esc(guild.id)}/applications/${esc(id)}/delete" style="margin-top:10px">
+          <input type="hidden" name="csrf" value="${csrfFor(session)}">
+          <button class="danger">Delete this form</button>
+        </form>`}
+      </details>`;
+    };
 
     const messageHtml = message
       ? `<div class="notice ${message.ok ? '' : 'bad'}">${esc(message.text)}</div>`
@@ -277,6 +356,7 @@ function makeDashboard(client, options = {}) {
         <a class="overview-link" href="#moderation"><span class="overview-icon">🛡️</span><span><strong>Moderation</strong><span>Anti-spam and log channel</span></span></a>
         <a class="overview-link" href="#tickets"><span class="overview-icon">🎫</span><span><strong>Ticket system</strong><span>Category, staff and limits</span></span></a>
         <a class="overview-link" href="#levels"><span class="overview-icon">⭐</span><span><strong>Levels & XP</strong><span>Announcements and rewards</span></span></a>
+        <a class="overview-link" href="#applications"><span class="overview-icon">📝</span><span><strong>Applications</strong><span>Staff & role application forms</span></span></a>
       </div>
       <div class="settings-layout">
         <nav class="settings-nav" aria-label="Settings navigation">
@@ -284,7 +364,8 @@ function makeDashboard(client, options = {}) {
           <a href="#moderation"><span class="nav-number">01</span><span>Moderation</span></a>
           <a href="#tickets"><span class="nav-number">02</span><span>Ticket system</span></a>
           <a href="#levels"><span class="nav-number">03</span><span>Levels & XP</span></a>
-          <a href="#more"><span class="nav-number">04</span><span>More features</span></a>
+          <a href="#applications"><span class="nav-number">04</span><span>Applications</span></a>
+          <a href="#more"><span class="nav-number">05</span><span>More features</span></a>
         </nav>
         <div class="settings-content">
           <form method="post" action="/guild/${esc(guild.id)}/moderation">
@@ -320,8 +401,8 @@ function makeDashboard(client, options = {}) {
                 </div>
                 <div class="field"><label for="ticketLog">Ticket log channel</label><select id="ticketLog" name="ticketLogChannelId">${channelOptions(ticket.logChannelId)}</select></div>
                 <div class="field"><label for="panelChannel">Existing ticket panel channel</label><select id="panelChannel" name="panelChannelId">${channelOptions(ticket.panelChannelId)}</select><small>This saves the panel channel setting only; it does not publish a new panel.</small></div>
-                <div class="field"><label for="staffRoles">Staff roles</label><select id="staffRoles" name="staffRoleIds" multiple>${roleOptions(Array.isArray(ticket.staffRoleIds) ? ticket.staffRoleIds : [])}</select><small>On a phone, tap to select or deselect roles.</small></div>
-                <div class="field"><label for="supportRoles">Support roles</label><select id="supportRoles" name="supportRoleIds" multiple>${roleOptions(Array.isArray(ticket.supportRoleIds) ? ticket.supportRoleIds : [])}</select></div>
+                <div class="field"><label>Staff roles</label>${roleGrid('staffRoleIds', Array.isArray(ticket.staffRoleIds) ? ticket.staffRoleIds : [])}<small>Can see and manage every ticket.</small></div>
+                <div class="field"><label>Support roles</label>${roleGrid('supportRoleIds', Array.isArray(ticket.supportRoleIds) ? ticket.supportRoleIds : [])}<small>Can see tickets and help out.</small></div>
 
                 <hr style="border:0;border-top:1px solid var(--line);margin:22px 0">
                 <h2>Ticket opening questions</h2>
@@ -360,6 +441,15 @@ function makeDashboard(client, options = {}) {
               </div>
             </section>
           </form>
+
+          <section class="settings-section" id="applications">
+            <div class="card">
+              <div class="section-kicker">04 · Applications</div>
+              <div class="cardhead"><span class="icon">📝</span><div><h2>Application forms</h2><p class="muted">Build forms for people to apply for staff or special roles. Each form saves on its own — open a form below to edit it, or add a new one.</p></div></div>
+              ${forms.length ? forms.map((form) => applicationFormCard(form)).join('') : '<p class="muted">No application forms yet. Create your first one below.</p>'}
+              ${applicationFormCard(null)}
+            </div>
+          </section>
 
           <section class="settings-section" id="more">
             <div class="card more-card">
@@ -553,7 +643,9 @@ function makeDashboard(client, options = {}) {
       return redirect(res, '/', [cookieText('sid', '', 0)]);
     }
 
-    const match = path.match(/^\/guild\/(\d{15,25})(?:\/(moderation|tickets|levels))?$/);
+    const match = path.match(
+      /^\/guild\/(\d{15,25})(?:\/(moderation|tickets|levels)|\/applications(?:\/(create)|\/([0-9a-f-]{8,40})\/(update|delete))?)?$/
+    );
 
     if (match) {
       const guild = await canManage(session.id, match[1]);
@@ -567,6 +659,11 @@ function makeDashboard(client, options = {}) {
       }
 
       if (req.method === 'GET') {
+        // Only the plain guild page is viewable with GET; the action
+        // sub-paths below only make sense as a form submission.
+        if (match[2] || match[3] || match[4]) {
+          return send(res, 404, notice('Not found', 'That page does not exist.'));
+        }
         return send(res, 200, guildPage(session, guild));
       }
 
@@ -807,6 +904,107 @@ function makeDashboard(client, options = {}) {
             text: 'Level settings saved.',
           })
         );
+      }
+
+      if (match[2] === undefined && (match[3] === 'create' || match[4])) {
+        // Shared parsing for both creating a new form and updating one.
+        const channelId = form.get('reviewChannelId') || '';
+        const reviewChannel = channelById(channelId);
+
+        if (channelId && !reviewChannel) {
+          return send(
+            res,
+            400,
+            guildPage(session, guild, {
+              ok: false,
+              text: 'That review channel is not valid. Nothing was saved.',
+            })
+          );
+        }
+
+        const questions = [];
+
+        for (let i = 1; i <= applications.MAX_QUESTIONS; i++) {
+          const label = String(form.get(`questionLabel${i}`) || '').trim();
+          if (!label) continue;
+
+          questions.push({
+            label,
+            required: form.get(`questionRequired${i}`) === 'yes',
+          });
+        }
+
+        const input = {
+          name: form.get('name') || '',
+          description: form.get('description') || '',
+          questions,
+          panelTitle: form.get('panelTitle') || '',
+          panelDescription: form.get('panelDescription') || '',
+          buttonLabel: form.get('buttonLabel') || '',
+          embedColor: form.get('embedColor') || '',
+          reviewChannelId: reviewChannel?.id || '',
+          reviewerRoleIds: roleIds('reviewerRoleIds'),
+          enabled: form.get('enabled') === 'yes',
+        };
+
+        try {
+          if (match[3] === 'create') {
+            applications.createForm(guild.id, input);
+
+            return send(
+              res,
+              200,
+              guildPage(session, guild, {
+                ok: true,
+                text: `Application form "${input.name}" created.`,
+              })
+            );
+          }
+
+          if (match[5] === 'update') {
+            const updated = applications.updateForm(guild.id, match[4], input);
+
+            if (!updated) {
+              return send(
+                res,
+                400,
+                guildPage(session, guild, {
+                  ok: false,
+                  text: 'That application form no longer exists.',
+                })
+              );
+            }
+
+            return send(
+              res,
+              200,
+              guildPage(session, guild, {
+                ok: true,
+                text: `Application form "${updated.name}" saved.`,
+              })
+            );
+          }
+        } catch (error) {
+          return send(
+            res,
+            400,
+            guildPage(session, guild, { ok: false, text: error.message })
+          );
+        }
+
+        if (match[5] === 'delete') {
+          const existing = applications.getForm(guild.id, match[4]);
+          applications.deleteForm(guild.id, match[4]);
+
+          return send(
+            res,
+            200,
+            guildPage(session, guild, {
+              ok: true,
+              text: existing ? `Deleted "${existing.name}".` : 'That form was already deleted.',
+            })
+          );
+        }
       }
     }
 
