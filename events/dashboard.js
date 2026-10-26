@@ -8,6 +8,7 @@ const { sendModLog } = require('../utils/modLog');
 const tickets = require('../utils/tickets');
 const levelRewards = require('../utils/levelRewards');
 const applications = require('../utils/applications');
+const applicationPanel = require('../utils/applicationPanel');
 
 const API = 'https://discord.com/api/v10';
 const SESSION_HOURS = 12;
@@ -318,7 +319,8 @@ function makeDashboard(client, options = {}) {
           }).join('')}
 
           <h2>Application panel</h2>
-          <p class="muted">The message members will see with the "apply" button, ready for when posting it in Discord is set up. Saving these now means nothing needs retyping later.</p>
+          <p class="muted">The message members see with the "apply" button.</p>
+          <div class="field"><label for="panelChannel${id}">Post the panel in</label><select id="panelChannel${id}" name="panelChannelId">${channelOptions(form?.panelChannelId || '')}</select><small>${form?.panelChannelId && form?.panelMessageId ? "Saving will update the message already posted there." : 'Saving will post a new message there.'} Set to Off to stop posting it (an already-posted message is removed).</small></div>
           <div class="field"><label for="panelTitle${id}">Panel title</label><input id="panelTitle${id}" name="panelTitle" maxlength="256" value="${esc(form?.panelTitle || '')}" placeholder="Defaults to the form name"></div>
           <div class="field"><label for="panelDescription${id}">Panel description</label><textarea id="panelDescription${id}" name="panelDescription" maxlength="4000" placeholder="Click the button below to submit your application.">${esc(form?.panelDescription && form.panelDescription !== 'Click the button below to submit your application.' ? form.panelDescription : '')}</textarea></div>
           <div class="row">
@@ -906,18 +908,20 @@ function makeDashboard(client, options = {}) {
         );
       }
 
-      if (match[2] === undefined && (match[3] === 'create' || match[4])) {
+      if (match[2] === undefined && (match[3] === 'create' || match[5] === 'update')) {
         // Shared parsing for both creating a new form and updating one.
         const channelId = form.get('reviewChannelId') || '';
         const reviewChannel = channelById(channelId);
+        const panelChannelId = form.get('panelChannelId') || '';
+        const panelChannel = channelById(panelChannelId);
 
-        if (channelId && !reviewChannel) {
+        if ((channelId && !reviewChannel) || (panelChannelId && !panelChannel)) {
           return send(
             res,
             400,
             guildPage(session, guild, {
               ok: false,
-              text: 'That review channel is not valid. Nothing was saved.',
+              text: 'That review channel or panel channel is not valid. Nothing was saved.',
             })
           );
         }
@@ -945,26 +949,24 @@ function makeDashboard(client, options = {}) {
           reviewChannelId: reviewChannel?.id || '',
           reviewerRoleIds: roleIds('reviewerRoleIds'),
           enabled: form.get('enabled') === 'yes',
+          // Clearing the panel channel also clears the remembered message,
+          // so a later channel pick posts a fresh message instead of trying
+          // to edit one that's no longer meant to exist.
+          panelChannelId: panelChannel?.id || '',
+          ...(panelChannel ? {} : { panelMessageId: '' }),
         };
 
         try {
+          let saved;
+          let justCreated = false;
+
           if (match[3] === 'create') {
-            applications.createForm(guild.id, input);
+            saved = applications.createForm(guild.id, input);
+            justCreated = true;
+          } else if (match[5] === 'update') {
+            const previous = applications.getForm(guild.id, match[4]);
 
-            return send(
-              res,
-              200,
-              guildPage(session, guild, {
-                ok: true,
-                text: `Application form "${input.name}" created.`,
-              })
-            );
-          }
-
-          if (match[5] === 'update') {
-            const updated = applications.updateForm(guild.id, match[4], input);
-
-            if (!updated) {
+            if (!previous) {
               return send(
                 res,
                 400,
@@ -975,15 +977,37 @@ function makeDashboard(client, options = {}) {
               );
             }
 
-            return send(
-              res,
-              200,
-              guildPage(session, guild, {
-                ok: true,
-                text: `Application form "${updated.name}" saved.`,
-              })
-            );
+            // The old panel message belongs to the channel that was saved
+            // before this edit; remove it there if the channel changed or
+            // was turned off, so a dead "Apply" button isn't left behind.
+            if (
+              previous.panelMessageId &&
+              previous.panelChannelId !== (panelChannel?.id || null)
+            ) {
+              await applicationPanel.deletePanelMessage(guild, previous);
+            }
+
+            saved = applications.updateForm(guild.id, match[4], input);
           }
+
+          let panelWarning = '';
+
+          if (saved && panelChannel) {
+            try {
+              saved = await applicationPanel.syncPanel(guild, saved);
+            } catch (error) {
+              panelWarning = ` The form saved, but I could not post the panel: ${error.message}`;
+            }
+          }
+
+          return send(
+            res,
+            200,
+            guildPage(session, guild, {
+              ok: true,
+              text: `Application form "${saved.name}" ${justCreated ? 'created' : 'saved'}.${panelWarning}`,
+            })
+          );
         } catch (error) {
           return send(
             res,
@@ -991,20 +1015,24 @@ function makeDashboard(client, options = {}) {
             guildPage(session, guild, { ok: false, text: error.message })
           );
         }
+      }
 
-        if (match[5] === 'delete') {
-          const existing = applications.getForm(guild.id, match[4]);
+      if (match[2] === undefined && match[5] === 'delete') {
+        const existing = applications.getForm(guild.id, match[4]);
+
+        if (existing) {
+          await applicationPanel.deletePanelMessage(guild, existing);
           applications.deleteForm(guild.id, match[4]);
-
-          return send(
-            res,
-            200,
-            guildPage(session, guild, {
-              ok: true,
-              text: existing ? `Deleted "${existing.name}".` : 'That form was already deleted.',
-            })
-          );
         }
+
+        return send(
+          res,
+          200,
+          guildPage(session, guild, {
+            ok: true,
+            text: existing ? `Deleted "${existing.name}".` : 'That form was already deleted.',
+          })
+        );
       }
     }
 
