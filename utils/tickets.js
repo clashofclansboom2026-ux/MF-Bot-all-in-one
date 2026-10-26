@@ -3,6 +3,34 @@ const store = require('./store');
 
 const STORE_NAME = 'tickets';
 
+const DEFAULT_QUESTIONS = [
+  {
+    id: 'question_1',
+    label: 'What do you need help with?',
+    required: true,
+  },
+  {
+    id: 'question_2',
+    label: 'Please provide any extra details.',
+    required: false,
+  },
+];
+
+function normalizeQuestions(questions) {
+  if (!Array.isArray(questions)) {
+    return DEFAULT_QUESTIONS.map((question) => ({ ...question }));
+  }
+
+  return questions
+    .slice(0, 5)
+    .map((question, index) => ({
+      id: `question_${index + 1}`,
+      label: String(question?.label || '').trim().slice(0, 45),
+      required: Boolean(question?.required),
+    }))
+    .filter((question) => question.label.length > 0);
+}
+
 function readAll() {
   const data = store.read(STORE_NAME, {});
   return data && typeof data === 'object' && !Array.isArray(data)
@@ -28,6 +56,9 @@ function getGuildData(guildId) {
         ticketCounter: 0,
         panelChannelId: null,
         panelMessageId: null,
+        ticketQuestions: DEFAULT_QUESTIONS.map((question) => ({
+          ...question,
+        })),
       },
       tickets: {},
     };
@@ -41,6 +72,25 @@ function getGuildData(guildId) {
 
   if (!all[guildId].tickets) {
     all[guildId].tickets = {};
+  }
+
+  all[guildId].settings = {
+    categoryId: null,
+    logChannelId: null,
+    staffRoleIds: [],
+    supportRoleIds: [],
+    maxOpenPerUser: 3,
+    ticketCounter: 0,
+    panelChannelId: null,
+    panelMessageId: null,
+    ...all[guildId].settings,
+  };
+
+  if (!Array.isArray(all[guildId].settings.ticketQuestions)) {
+    all[guildId].settings.ticketQuestions = DEFAULT_QUESTIONS.map(
+      (question) => ({ ...question })
+    );
+    writeAll(all);
   }
 
   return all[guildId];
@@ -62,9 +112,18 @@ function updateSettings(guildId, updates) {
     ticketCounter: 0,
     panelChannelId: null,
     panelMessageId: null,
+    ticketQuestions: DEFAULT_QUESTIONS.map((question) => ({
+      ...question,
+    })),
     ...current.settings,
     ...updates,
   };
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'ticketQuestions')) {
+    current.settings.ticketQuestions = normalizeQuestions(
+      updates.ticketQuestions
+    );
+  }
 
   current.tickets ||= {};
   all[guildId] = current;
@@ -75,6 +134,11 @@ function updateSettings(guildId, updates) {
 
 function getSettings(guildId) {
   return getGuildData(guildId).settings;
+}
+
+function getTicketQuestions(guildId) {
+  const settings = getSettings(guildId);
+  return normalizeQuestions(settings.ticketQuestions);
 }
 
 function createTicket(guildId, ticket) {
@@ -131,8 +195,12 @@ function getTickets(guildId, filters = {}) {
   return tickets.filter((ticket) => {
     if (filters.status && ticket.status !== filters.status) return false;
     if (filters.userId && ticket.userId !== filters.userId) return false;
-    if (filters.channelId && ticket.channelId !== filters.channelId) return false;
-    if (filters.claimedBy && ticket.claimedBy !== filters.claimedBy) return false;
+    if (filters.channelId && ticket.channelId !== filters.channelId) {
+      return false;
+    }
+    if (filters.claimedBy && ticket.claimedBy !== filters.claimedBy) {
+      return false;
+    }
     return true;
   });
 }
@@ -142,7 +210,10 @@ function getOpenTicketCount(guildId, userId) {
 }
 
 module.exports = {
+  DEFAULT_QUESTIONS,
+  normalizeQuestions,
   getSettings,
+  getTicketQuestions,
   updateSettings,
   createTicket,
   getTicket,
