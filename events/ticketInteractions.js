@@ -1,3 +1,4 @@
+
 const {
   Events,
   ChannelType,
@@ -15,14 +16,6 @@ const {
 } = require('discord.js');
 
 const tickets = require('../utils/tickets');
-
-const QUESTIONS = [
-  { id: 'question_1', label: 'What do you need help with?', required: true },
-  { id: 'question_2', label: 'Please provide more details', required: true },
-  { id: 'question_3', label: 'Have you tried anything already?', required: false },
-  { id: 'question_4', label: 'How urgent is this?', required: false },
-  { id: 'question_5', label: 'Anything else we should know?', required: false },
-];
 
 function dashboardEmbed(guild, settings) {
   return new EmbedBuilder()
@@ -131,20 +124,27 @@ function isAdmin(interaction) {
   );
 }
 
-function buildQuestionnaire() {
+/**
+ * Build the ticket modal from the questions saved in the dashboard.
+ */
+function buildQuestionnaire(guildId) {
+  const questions = tickets.getTicketQuestions(guildId);
+
   const modal = new ModalBuilder()
     .setCustomId('ticket:create:submit')
     .setTitle('Open a Support Ticket');
 
-  for (const question of QUESTIONS) {
+  for (const question of questions.slice(0, 5)) {
     const input = new TextInputBuilder()
       .setCustomId(question.id)
-      .setLabel(question.label)
+      .setLabel(question.label.slice(0, 45))
       .setStyle(TextInputStyle.Paragraph)
-      .setRequired(question.required)
+      .setRequired(Boolean(question.required))
       .setMaxLength(1000);
 
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(input)
+    );
   }
 
   return modal;
@@ -430,7 +430,7 @@ module.exports = {
       });
     }
 
-    // Open a ticket questionnaire.
+    // Open a ticket questionnaire using the saved dashboard questions.
     if (
       interaction.isButton() &&
       interaction.customId === 'ticket:create'
@@ -442,7 +442,9 @@ module.exports = {
         });
       }
 
-      return interaction.showModal(buildQuestionnaire());
+      return interaction.showModal(
+        buildQuestionnaire(interaction.guildId)
+      );
     }
 
     if (
@@ -459,12 +461,23 @@ module.exports = {
       });
     }
 
-    const answers = QUESTIONS.map(question => ({
-      question: question.label,
-      answer: interaction.fields.getTextInputValue(question.id).trim(),
-    })).filter(item => item.answer);
+    // Only read fields that were actually included in this modal.
+    // This allows administrators to remove questions without causing errors.
+    const configuredQuestions = tickets.getTicketQuestions(
+      interaction.guildId
+    );
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const answers = configuredQuestions
+      .filter((question) => interaction.fields.fields.has(question.id))
+      .map((question) => ({
+        question: question.label,
+        answer: interaction.fields.fields.get(question.id).value.trim(),
+      }))
+      .filter((item) => item.answer);
+
+    await interaction.deferReply({
+      flags: MessageFlags.Ephemeral,
+    });
 
     let ticketChannel;
 
@@ -603,8 +616,16 @@ module.exports = {
           `Hello ${interaction.user}, your ticket has been created. A support team member will respond when available.`
         )
         .addFields(
-          { name: 'Opened by', value: `${interaction.user}`, inline: true },
-          { name: 'Status', value: 'Open', inline: true },
+          {
+            name: 'Opened by',
+            value: `${interaction.user}`,
+            inline: true,
+          },
+          {
+            name: 'Status',
+            value: 'Open',
+            inline: true,
+          },
           ...answers.map(item => ({
             name: item.question,
             value: item.answer.slice(0, 1024),
