@@ -1,3 +1,4 @@
+
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Events, ChannelType, PermissionFlagsBits } = require('discord.js');
@@ -258,6 +259,7 @@ function makeDashboard(client, options = {}) {
       roles.map((r) => `<option value="${esc(r.id)}"${selected.includes(r.id) ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
 
     const ticket = tickets.getSettings(guild.id);
+    const ticketQuestions = tickets.getTicketQuestions(guild.id);
     const level = levelRewards.getSettings(guild.id);
     const rewardEntries = Object.entries(level.rewards).sort((a, b) => Number(a[0]) - Number(b[0]));
 
@@ -320,6 +322,19 @@ function makeDashboard(client, options = {}) {
                 <div class="field"><label for="panelChannel">Existing ticket panel channel</label><select id="panelChannel" name="panelChannelId">${channelOptions(ticket.panelChannelId)}</select><small>This saves the panel channel setting only; it does not publish a new panel.</small></div>
                 <div class="field"><label for="staffRoles">Staff roles</label><select id="staffRoles" name="staffRoleIds" multiple>${roleOptions(Array.isArray(ticket.staffRoleIds) ? ticket.staffRoleIds : [])}</select><small>On a phone, tap to select or deselect roles.</small></div>
                 <div class="field"><label for="supportRoles">Support roles</label><select id="supportRoles" name="supportRoleIds" multiple>${roleOptions(Array.isArray(ticket.supportRoleIds) ? ticket.supportRoleIds : [])}</select></div>
+
+                <hr style="border:0;border-top:1px solid var(--line);margin:22px 0">
+                <h2>Ticket opening questions</h2>
+                <p class="muted">Customize the questions members answer when opening a ticket. Leave wording blank to remove a question. You can use up to five questions, each up to 45 characters.</p>
+                ${Array.from({ length: 5 }, (_, index) => {
+                  const question = ticketQuestions[index] || { label: '', required: false };
+                  const number = index + 1;
+                  return `<div class="field">
+                    <label for="questionLabel${number}">Question ${number}</label>
+                    <input id="questionLabel${number}" name="questionLabel${number}" maxlength="45" value="${esc(question.label)}" placeholder="${number === 1 ? 'What do you need help with?' : 'Optional question'}">
+                    <label class="checkbox"><input type="checkbox" name="questionRequired${number}" value="yes"${question.required ? ' checked' : ''}> Required</label>
+                  </div>`;
+                }).join('')}
                 <button>Save ticket settings</button>
               </div>
             </section>
@@ -647,6 +662,40 @@ function makeDashboard(client, options = {}) {
         const category = categoryId ? guild.channels.cache.get(categoryId) : null;
         const logChannel = channelById(logId);
         const panelChannel = channelById(panelId);
+        const ticketQuestions = [];
+
+        for (let i = 1; i <= 5; i++) {
+          const label = String(form.get(`questionLabel${i}`) || '').trim();
+
+          if (!label) continue;
+
+          if (label.length > 45) {
+            return send(
+              res,
+              400,
+              guildPage(session, guild, {
+                ok: false,
+                text: 'Each ticket question must be 45 characters or fewer. Nothing was saved.',
+              })
+            );
+          }
+
+          ticketQuestions.push({
+            label,
+            required: form.get(`questionRequired${i}`) === 'yes',
+          });
+        }
+
+        if (ticketQuestions.length === 0) {
+          return send(
+            res,
+            400,
+            guildPage(session, guild, {
+              ok: false,
+              text: 'Add at least one ticket question before saving.',
+            })
+          );
+        }
 
         if (
           maxOpen === null ||
@@ -671,6 +720,7 @@ function makeDashboard(client, options = {}) {
           maxOpenPerUser: maxOpen,
           staffRoleIds: roleIds('staffRoleIds'),
           supportRoleIds: roleIds('supportRoleIds'),
+          ticketQuestions,
         });
 
         return send(
