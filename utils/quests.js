@@ -21,8 +21,29 @@ const QUESTS = [
   },
 ];
 
+const DISCORD_ID_PATTERN = /^\d{17,20}$/;
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireDiscordId(value, label) {
+  const id = String(value ?? '');
+
+  if (!DISCORD_ID_PATTERN.test(id)) {
+    throw new Error(`A valid Discord ${label} ID is required.`);
+  }
+
+  return id;
+}
+
 function getPeriodKey(type, now = new Date()) {
   const date = new Date(now);
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('A valid date is required.');
+  }
+
   const year = date.getUTCFullYear();
 
   if (type === 'daily') {
@@ -45,34 +66,52 @@ function getPeriodKey(type, now = new Date()) {
 }
 
 function readAll() {
-  return store.read('quests', {});
+  const data = store.read('quests', {});
+  return isRecord(data) ? data : {};
 }
 
 function getCurrentProgress(record, quest, now = new Date()) {
   const period = getPeriodKey(quest.type, now);
-  const saved = record[quest.id];
+
+  const saved =
+    isRecord(record) && isRecord(record[quest.id])
+      ? record[quest.id]
+      : null;
 
   if (!saved || saved.period !== period) {
     return { period, progress: 0, claimed: false };
   }
 
+  const savedProgress = Number(saved.progress);
+
+  const progress = Number.isFinite(savedProgress)
+    ? Math.min(quest.target, Math.max(0, Math.floor(savedProgress)))
+    : 0;
+
   return {
     period,
-    progress: Math.min(
-      quest.target,
-      Math.max(0, Number(saved.progress) || 0)
-    ),
+    progress,
     claimed: saved.claimed === true,
   };
 }
 
+function getUserRecord(all, guildId, userId) {
+  const guildData = isRecord(all[guildId]) ? all[guildId] : {};
+  const userData = isRecord(guildData[userId])
+    ? guildData[userId]
+    : {};
+
+  return { guildData, userData };
+}
+
 function recordMessage(guildId, userId, now = new Date()) {
+  guildId = requireDiscordId(guildId, 'server');
+  userId = requireDiscordId(userId, 'user');
+
   const all = readAll();
+  const { guildData, userData } = getUserRecord(all, guildId, userId);
 
-  all[guildId] ??= {};
-  all[guildId][userId] ??= {};
-
-  const record = all[guildId][userId];
+  const record = { ...userData };
   const updates = [];
 
   for (const quest of QUESTS) {
@@ -93,16 +132,23 @@ function recordMessage(guildId, userId, now = new Date()) {
     });
   }
 
+  guildData[userId] = record;
+  all[guildId] = guildData;
+
   store.write('quests', all);
+
   return updates;
 }
 
 function getQuests(guildId, userId, now = new Date()) {
+  guildId = requireDiscordId(guildId, 'server');
+  userId = requireDiscordId(userId, 'user');
+
   const all = readAll();
-  const record = all[guildId]?.[userId] || {};
+  const { userData } = getUserRecord(all, guildId, userId);
 
   return QUESTS.map((quest) => {
-    const current = getCurrentProgress(record, quest, now);
+    const current = getCurrentProgress(userData, quest, now);
 
     return {
       ...quest,
@@ -115,6 +161,9 @@ function getQuests(guildId, userId, now = new Date()) {
 }
 
 function claimQuest(guildId, userId, questId, now = new Date()) {
+  guildId = requireDiscordId(guildId, 'server');
+  userId = requireDiscordId(userId, 'user');
+
   const quest = QUESTS.find((item) => item.id === questId);
 
   if (!quest) {
@@ -122,8 +171,8 @@ function claimQuest(guildId, userId, questId, now = new Date()) {
   }
 
   const all = readAll();
-  const record = all[guildId]?.[userId] || {};
-  const current = getCurrentProgress(record, quest, now);
+  const { guildData, userData } = getUserRecord(all, guildId, userId);
+  const current = getCurrentProgress(userData, quest, now);
 
   if (current.progress < quest.target) {
     return { success: false, reason: 'incomplete' };
@@ -133,35 +182,31 @@ function claimQuest(guildId, userId, questId, now = new Date()) {
     return { success: false, reason: 'claimed' };
   }
 
-  all[guildId] ??= {};
-  all[guildId][userId] ??= {};
+  const record = { ...userData };
+  const previousQuestRecord = record[quest.id];
 
-  const userRecord = all[guildId][userId];
-  const previousQuestRecord = userRecord[quest.id];
-
-  userRecord[quest.id] = {
+  record[quest.id] = {
     period: current.period,
     progress: current.progress,
     claimed: true,
   };
 
-  // Prevent duplicate claims. If awarding XP fails, restore the quest state.
+  guildData[userId] = record;
+  all[guildId] = guildData;
+
+  // Save the claim before awarding XP to reduce duplicate claims.
   store.write('quests', all);
 
   let xpResult;
 
   try {
-    xpResult = xp.addBonusXp(
-      guildId,
-      userId,
-      quest.rewardXp
-    );
+    xpResult = xp.addBonusXp(guildId, userId, quest.rewardXp);
   } catch (error) {
     try {
       if (previousQuestRecord === undefined) {
-        delete userRecord[quest.id];
+        delete record[quest.id];
       } else {
-        userRecord[quest.id] = previousQuestRecord;
+        record[quest.id] = previousQuestRecord;
       }
 
       store.write('quests', all);
