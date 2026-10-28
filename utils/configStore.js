@@ -1,52 +1,74 @@
 
-const fs = require('node:fs');
-const path = require('node:path');
+'use strict';
 
-const dataDirectory = path.join(__dirname, '..', 'data');
-const configFile = path.join(dataDirectory, 'config.json');
+// MF Bot - Guild Configuration Storage
+// Uses the shared JSON storage utility so configuration benefits from
+// the same safe file-writing behaviour as the bot's other saved data.
 
-function ensureStorage() {
-  if (!fs.existsSync(dataDirectory)) {
-    fs.mkdirSync(dataDirectory, { recursive: true });
+const store = require('./store');
+
+function validateGuildId(guildId) {
+  if (
+    (typeof guildId !== 'string' && typeof guildId !== 'number') ||
+    String(guildId).trim() === ''
+  ) {
+    throw new TypeError('A valid guild ID is required.');
   }
 
-  if (!fs.existsSync(configFile)) {
-    fs.writeFileSync(configFile, '{}', 'utf8');
-  }
+  return String(guildId);
 }
 
-function readConfig() {
-  ensureStorage();
+function readAllConfig() {
+  const config = store.read('config', {});
 
-  try {
-    return JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  } catch (error) {
-    console.error('Could not read configuration:', error);
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    console.error(
+      '[Config] Saved configuration is not a valid object. Using an empty configuration.'
+    );
     return {};
   }
+
+  return config;
 }
 
 function getGuildConfig(guildId) {
-  const config = readConfig();
-  return config[guildId] || {};
+  const id = validateGuildId(guildId);
+  const config = readAllConfig();
+  const guildConfig = config[id];
+
+  if (
+    !guildConfig ||
+    typeof guildConfig !== 'object' ||
+    Array.isArray(guildConfig)
+  ) {
+    return {};
+  }
+
+  return guildConfig;
 }
 
 function setGuildConfig(guildId, updates) {
-  const config = readConfig();
+  const id = validateGuildId(guildId);
 
-  config[guildId] = {
-    ...(config[guildId] || {}),
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    throw new TypeError('Configuration updates must be an object.');
+  }
+
+  const config = readAllConfig();
+  const existingGuildConfig = config[id];
+
+  config[id] = {
+    ...(existingGuildConfig &&
+    typeof existingGuildConfig === 'object' &&
+    !Array.isArray(existingGuildConfig)
+      ? existingGuildConfig
+      : {}),
     ...updates,
   };
 
-  ensureStorage();
-  fs.writeFileSync(
-    configFile,
-    JSON.stringify(config, null, 2),
-    'utf8'
-  );
+  store.write('config', config);
 
-  return config[guildId];
+  return config[id];
 }
 
 module.exports = {
