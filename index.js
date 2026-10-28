@@ -1,4 +1,3 @@
-
 'use strict';
 
 // MF Bot — central bot entry point.
@@ -554,8 +553,8 @@ async function handleButton(interaction) {
     return handleApplicationReview(interaction);
   }
 
-  // Other features can add button handlers here or in their own event files.
-  return replyPrivate(interaction, 'This button is not supported or its feature is not loaded.');
+  // Let feature-specific event handlers process their own buttons.
+  return;
 }
 
 async function handleModal(interaction) {
@@ -563,7 +562,8 @@ async function handleModal(interaction) {
     return handleApplicationSubmit(interaction);
   }
 
-  return replyPrivate(interaction, 'This form is not supported or its feature is not loaded.');
+  // Let feature-specific event handlers process their own modal submissions.
+  return;
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
