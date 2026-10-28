@@ -1,4 +1,3 @@
-
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Events, ChannelType, PermissionFlagsBits } = require('discord.js');
@@ -114,7 +113,8 @@ function makeDashboard(client, options = {}) {
     const guild = client.guilds.cache.get(guildId);
     if (!guild) return null;
 
-    const member = await guild.members.fetch(userId).catch(() => null);
+    // Fetch the current member record rather than relying on cached membership.
+    const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null);
     if (!member) return null;
 
     if (!member.permissions.has(PermissionFlagsBits.ManageGuild)) {
@@ -127,8 +127,11 @@ function makeDashboard(client, options = {}) {
   async function manageableGuilds(userId) {
     const found = [];
 
+    // Iterate over the bot's joined servers and verify the user's live
+    // membership/permissions in each. Fail closed if Discord cannot verify it.
     for (const guild of client.guilds.cache.values()) {
-      if (await canManage(userId, guild.id)) found.push(guild);
+      const manageable = await canManage(userId, guild.id);
+      if (manageable) found.push(manageable);
     }
 
     return found.sort((a, b) => a.name.localeCompare(b.name));
@@ -204,8 +207,6 @@ function makeDashboard(client, options = {}) {
   .formcard{border:1px solid var(--line);border-radius:14px;padding:18px;margin:16px 0;background:#0c1220}
   .formcard summary{cursor:pointer;color:var(--cyan);font-weight:750;list-style:none}
   .formcard summary::-webkit-details-marker{display:none}
-  .formcard summary::before{content:'▸ ';display:inline-block}
-  .formcard[open] summary::before{content:'▾ '}
   .formhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   .badge{padding:3px 10px;border-radius:999px;font-size:.76rem;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
   .badge.on{color:#36c98f;border-color:#2d5e4c}
@@ -661,8 +662,6 @@ function makeDashboard(client, options = {}) {
       }
 
       if (req.method === 'GET') {
-        // Only the plain guild page is viewable with GET; the action
-        // sub-paths below only make sense as a form submission.
         if (match[2] || match[3] || match[4]) {
           return send(res, 404, notice('Not found', 'That page does not exist.'));
         }
@@ -851,7 +850,6 @@ function makeDashboard(client, options = {}) {
           (rewardLevelRaw !== '' && rewardRoleId === '') ||
           (rewardLevelRaw === '' && rewardRoleId !== '');
 
-        // Only fetch the bot member when a role reward is being changed.
         const botMember = rewardRoleId
           ? await guild.members.fetchMe().catch(() => null)
           : null;
@@ -883,7 +881,6 @@ function makeDashboard(client, options = {}) {
           );
         }
 
-        // Validate every submitted value before changing any saved setting.
         levelRewards.setChannel(guild.id, channel?.id || null);
         levelRewards.setAnnouncementsEnabled(
           guild.id,
@@ -909,7 +906,6 @@ function makeDashboard(client, options = {}) {
       }
 
       if (match[2] === undefined && (match[3] === 'create' || match[5] === 'update')) {
-        // Shared parsing for both creating a new form and updating one.
         const channelId = form.get('reviewChannelId') || '';
         const reviewChannel = channelById(channelId);
         const panelChannelId = form.get('panelChannelId') || '';
@@ -949,9 +945,6 @@ function makeDashboard(client, options = {}) {
           reviewChannelId: reviewChannel?.id || '',
           reviewerRoleIds: roleIds('reviewerRoleIds'),
           enabled: form.get('enabled') === 'yes',
-          // Clearing the panel channel also clears the remembered message,
-          // so a later channel pick posts a fresh message instead of trying
-          // to edit one that's no longer meant to exist.
           panelChannelId: panelChannel?.id || '',
           ...(panelChannel ? {} : { panelMessageId: '' }),
         };
@@ -977,9 +970,6 @@ function makeDashboard(client, options = {}) {
               );
             }
 
-            // The old panel message belongs to the channel that was saved
-            // before this edit; remove it there if the channel changed or
-            // was turned off, so a dead "Apply" button isn't left behind.
             if (
               previous.panelMessageId &&
               previous.panelChannelId !== (panelChannel?.id || null)
@@ -1041,7 +1031,6 @@ function makeDashboard(client, options = {}) {
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
-      // Return a proper client error when a submitted form exceeds 20 KB.
       if (error.statusCode === 413) {
         if (!res.headersSent) {
           send(
