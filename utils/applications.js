@@ -1,5 +1,4 @@
-
- // utils/applications.js
+// utils/applications.js
 // Persistent storage and helpers for multiple application forms per server.
 
 const crypto = require('node:crypto');
@@ -10,6 +9,7 @@ const MAX_QUESTIONS = 5;
 const MAX_FORM_NAME_LENGTH = 80;
 const MAX_QUESTION_LENGTH = 45;
 const MAX_DESCRIPTION_LENGTH = 1000;
+const DISCORD_ID_PATTERN = /^\d{17,20}$/;
 
 function makeId() {
   return crypto.randomUUID();
@@ -19,19 +19,62 @@ function cleanText(value, maxLength, fallback = '') {
   return String(value ?? '').trim().slice(0, maxLength) || fallback;
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireGuildId(guildId) {
+  if (!DISCORD_ID_PATTERN.test(String(guildId ?? ''))) {
+    throw new Error('A valid server ID is required.');
+  }
+
+  return String(guildId);
+}
+
+function copyQuestions(questions) {
+  return Array.isArray(questions)
+    ? questions.filter(isRecord).map((question) => ({ ...question }))
+    : [];
+}
+
+function copyForm(form) {
+  if (!isRecord(form)) return null;
+
+  return {
+    ...form,
+    questions: copyQuestions(form.questions),
+  };
+}
+
+function copySubmission(submission) {
+  if (!isRecord(submission)) return null;
+
+  const answers = Array.isArray(submission.answers)
+    ? submission.answers.filter(isRecord).map((answer) => ({ ...answer }))
+    : [];
+
+  return {
+    ...submission,
+    answers,
+  };
+}
+
 function normalizeQuestions(questions) {
   if (!Array.isArray(questions)) return [];
 
-  return questions.slice(0, MAX_QUESTIONS).map((question, index) => ({
-    id: 'question_' + (index + 1),
-    label: cleanText(question?.label, MAX_QUESTION_LENGTH),
-    required: question?.required !== false,
-  })).filter((question) => question.label.length > 0);
+  return questions
+    .slice(0, MAX_QUESTIONS)
+    .map((question, index) => ({
+      id: 'question_' + (index + 1),
+      label: cleanText(question?.label, MAX_QUESTION_LENGTH),
+      required: question?.required !== false,
+    }))
+    .filter((question) => question.label.length > 0);
 }
 
 function readAll() {
   const data = store.read(STORE_NAME, {});
-  return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  return isRecord(data) ? data : {};
 }
 
 function writeAll(data) {
@@ -39,59 +82,68 @@ function writeAll(data) {
 }
 
 function getGuildData(guildId) {
-  if (!guildId) throw new Error('A server ID is required.');
+  guildId = requireGuildId(guildId);
 
   const all = readAll();
+  let changed = false;
 
-  if (!all[guildId] || typeof all[guildId] !== 'object') {
+  if (!isRecord(all[guildId])) {
     all[guildId] = { forms: {}, submissions: {} };
-    writeAll(all);
+    changed = true;
   }
 
   const guildData = all[guildId];
 
-  if (!guildData.forms || typeof guildData.forms !== 'object' || Array.isArray(guildData.forms)) {
+  if (!isRecord(guildData.forms)) {
     guildData.forms = {};
+    changed = true;
   }
 
-  if (!guildData.submissions || typeof guildData.submissions !== 'object' || Array.isArray(guildData.submissions)) {
+  if (!isRecord(guildData.submissions)) {
     guildData.submissions = {};
+    changed = true;
   }
+
+  if (changed) writeAll(all);
 
   return { all, guildData };
 }
 
 function saveGuildData(guildId, all, guildData) {
-  all[guildId] = guildData;
+  all[requireGuildId(guildId)] = guildData;
   writeAll(all);
 }
 
 function listForms(guildId) {
   const { guildData } = getGuildData(guildId);
+
   return Object.values(guildData.forms)
-    .map((form) => ({
-      ...form,
-      questions: form.questions.map((question) => ({ ...question })),
-    }))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .filter(isRecord)
+    .map(copyForm)
+    .filter(Boolean)
+    .sort((a, b) =>
+      String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+    );
 }
 
 function getForm(guildId, formId) {
   const { guildData } = getGuildData(guildId);
-  const form = guildData.forms[formId];
-  if (!form) return null;
-
-  return {
-    ...form,
-    questions: form.questions.map((question) => ({ ...question })),
-  };
+  return copyForm(guildData.forms[String(formId)]) || null;
 }
 
 function createForm(guildId, input = {}) {
+  if (!isRecord(input)) {
+    throw new Error('Application form details must be an object.');
+  }
+
   const name = cleanText(input.name, MAX_FORM_NAME_LENGTH);
-  if (!name) throw new Error('Give the application form a name.');
+
+  if (!name) {
+    throw new Error('Give the application form a name.');
+  }
 
   const questions = normalizeQuestions(input.questions);
+
   if (questions.length === 0) {
     throw new Error('Add at least one question before saving the form.');
   }
@@ -116,11 +168,13 @@ function createForm(guildId, input = {}) {
       : '#347eff',
     reviewChannelId: cleanText(input.reviewChannelId, 30) || null,
     reviewerRoleIds: Array.isArray(input.reviewerRoleIds)
-      ? [...new Set(
-          input.reviewerRoleIds
-            .map((id) => String(id).trim())
-            .filter((id) => /^\d{17,20}$/.test(id))
-        )].slice(0, 20)
+      ? [
+          ...new Set(
+            input.reviewerRoleIds
+              .map((id) => String(id).trim())
+              .filter((id) => DISCORD_ID_PATTERN.test(id))
+          ),
+        ].slice(0, 20)
       : [],
     panelChannelId: null,
     panelMessageId: null,
@@ -136,27 +190,41 @@ function createForm(guildId, input = {}) {
 }
 
 function updateForm(guildId, formId, updates = {}) {
+  if (!isRecord(updates)) {
+    throw new Error('Form updates must be an object.');
+  }
+
   const { all, guildData } = getGuildData(guildId);
-  const current = guildData.forms[formId];
-  if (!current) return null;
+  const current = guildData.forms[String(formId)];
+
+  if (!isRecord(current)) return null;
 
   const next = { ...current };
 
   if (Object.prototype.hasOwnProperty.call(updates, 'name')) {
     const name = cleanText(updates.name, MAX_FORM_NAME_LENGTH);
-    if (!name) throw new Error('Give the application form a name.');
+
+    if (!name) {
+      throw new Error('Give the application form a name.');
+    }
+
     next.name = name;
   }
 
   if (Object.prototype.hasOwnProperty.call(updates, 'description')) {
-    next.description = cleanText(updates.description, MAX_DESCRIPTION_LENGTH);
+    next.description = cleanText(
+      updates.description,
+      MAX_DESCRIPTION_LENGTH
+    );
   }
 
   if (Object.prototype.hasOwnProperty.call(updates, 'questions')) {
     const questions = normalizeQuestions(updates.questions);
+
     if (questions.length === 0) {
       throw new Error('Add at least one question before saving the form.');
     }
+
     next.questions = questions;
   }
 
@@ -173,7 +241,9 @@ function updateForm(guildId, formId, updates = {}) {
   }
 
   if (Object.prototype.hasOwnProperty.call(updates, 'embedColor')) {
-    next.embedColor = /^#[0-9a-fA-F]{6}$/.test(String(updates.embedColor || ''))
+    next.embedColor = /^#[0-9a-fA-F]{6}$/.test(
+      String(updates.embedColor || '')
+    )
       ? updates.embedColor
       : '#347eff';
   }
@@ -184,11 +254,13 @@ function updateForm(guildId, formId, updates = {}) {
 
   if (Object.prototype.hasOwnProperty.call(updates, 'reviewerRoleIds')) {
     next.reviewerRoleIds = Array.isArray(updates.reviewerRoleIds)
-      ? [...new Set(
-          updates.reviewerRoleIds
-            .map((id) => String(id).trim())
-            .filter((id) => /^\d{17,20}$/.test(id))
-        )].slice(0, 20)
+      ? [
+          ...new Set(
+            updates.reviewerRoleIds
+              .map((id) => String(id).trim())
+              .filter((id) => DISCORD_ID_PATTERN.test(id))
+          ),
+        ].slice(0, 20)
       : [];
   }
 
@@ -205,7 +277,8 @@ function updateForm(guildId, formId, updates = {}) {
   }
 
   next.updatedAt = new Date().toISOString();
-  guildData.forms[formId] = next;
+  guildData.forms[String(formId)] = next;
+
   saveGuildData(guildId, all, guildData);
 
   return getForm(guildId, formId);
@@ -213,7 +286,10 @@ function updateForm(guildId, formId, updates = {}) {
 
 function deleteForm(guildId, formId) {
   const { all, guildData } = getGuildData(guildId);
-  if (!guildData.forms[formId]) return false;
+
+  formId = String(formId);
+
+  if (!isRecord(guildData.forms[formId])) return false;
 
   delete guildData.forms[formId];
   saveGuildData(guildId, all, guildData);
@@ -222,23 +298,40 @@ function deleteForm(guildId, formId) {
 }
 
 function createSubmission(guildId, formId, submission = {}) {
-  const { all, guildData } = getGuildData(guildId);
-  const form = guildData.forms[formId];
+  if (!isRecord(submission)) {
+    throw new Error('Submission details must be an object.');
+  }
 
-  if (!form || !form.enabled) {
+  const { all, guildData } = getGuildData(guildId);
+  const form = guildData.forms[String(formId)];
+
+  if (!isRecord(form) || form.enabled === false) {
     throw new Error('This application form is unavailable.');
   }
 
-  if (!submission.userId || !/^\d{17,20}$/.test(String(submission.userId))) {
+  if (!DISCORD_ID_PATTERN.test(String(submission.userId ?? ''))) {
     throw new Error('A valid applicant ID is required.');
   }
 
-  const answers = form.questions.map((question) => {
-    const raw = submission.answers && submission.answers[question.id];
-    const answer = String(raw ?? '').trim().slice(0, 4000);
+  const questions = copyQuestions(form.questions);
+
+  if (questions.length === 0) {
+    throw new Error('This application form has no valid questions.');
+  }
+
+  const suppliedAnswers = isRecord(submission.answers)
+    ? submission.answers
+    : {};
+
+  const answers = questions.map((question) => {
+    const answer = String(
+      suppliedAnswers[question.id] ?? ''
+    ).trim().slice(0, 4000);
 
     if (question.required && !answer) {
-      throw new Error('Please answer the required question: ' + question.label);
+      throw new Error(
+        'Please answer the required question: ' + question.label
+      );
     }
 
     return {
@@ -252,8 +345,8 @@ function createSubmission(guildId, formId, submission = {}) {
 
   const record = {
     id: makeId(),
-    formId,
-    formName: form.name,
+    formId: String(formId),
+    formName: cleanText(form.name, MAX_FORM_NAME_LENGTH, 'Application'),
     userId: String(submission.userId),
     username: cleanText(submission.username, 100, 'Unknown user'),
     answers,
@@ -267,50 +360,64 @@ function createSubmission(guildId, formId, submission = {}) {
   guildData.submissions[record.id] = record;
   saveGuildData(guildId, all, guildData);
 
-  return {
-    ...record,
-    answers: record.answers.map((answer) => ({ ...answer })),
-  };
+  return copySubmission(record);
 }
 
 function listSubmissions(guildId, filters = {}) {
+  if (!isRecord(filters)) filters = {};
+
   const { guildData } = getGuildData(guildId);
 
   return Object.values(guildData.submissions)
-    .filter((submission) => !filters.formId || submission.formId === filters.formId)
-    .filter((submission) => !filters.status || submission.status === filters.status)
-    .filter((submission) => !filters.userId || submission.userId === filters.userId)
-    .map((submission) => ({
-      ...submission,
-      answers: submission.answers.map((answer) => ({ ...answer })),
-    }))
-    .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+    .filter(isRecord)
+    .filter(
+      (submission) =>
+        !filters.formId || submission.formId === filters.formId
+    )
+    .filter(
+      (submission) =>
+        !filters.status || submission.status === filters.status
+    )
+    .filter(
+      (submission) =>
+        !filters.userId || submission.userId === filters.userId
+    )
+    .map(copySubmission)
+    .filter(Boolean)
+    .sort((a, b) =>
+      String(b.submittedAt || '').localeCompare(
+        String(a.submittedAt || '')
+      )
+    );
 }
 
 function getSubmission(guildId, submissionId) {
   const { guildData } = getGuildData(guildId);
-  const submission = guildData.submissions[submissionId];
 
-  return submission
-    ? {
-        ...submission,
-        answers: submission.answers.map((answer) => ({ ...answer })),
-      }
-    : null;
+  return copySubmission(
+    guildData.submissions[String(submissionId)]
+  ) || null;
 }
 
-function reviewSubmission(guildId, submissionId, decision, reviewerId, note = '') {
+function reviewSubmission(
+  guildId,
+  submissionId,
+  decision,
+  reviewerId,
+  note = ''
+) {
   if (!['approved', 'rejected'].includes(decision)) {
     throw new Error('Review decision must be approved or rejected.');
   }
 
-  if (!reviewerId || !/^\d{17,20}$/.test(String(reviewerId))) {
+  if (!DISCORD_ID_PATTERN.test(String(reviewerId ?? ''))) {
     throw new Error('A valid reviewer ID is required.');
   }
 
   const { all, guildData } = getGuildData(guildId);
-  const submission = guildData.submissions[submissionId];
-  if (!submission) return null;
+  const submission = guildData.submissions[String(submissionId)];
+
+  if (!isRecord(submission)) return null;
 
   submission.status = decision;
   submission.reviewedAt = new Date().toISOString();
