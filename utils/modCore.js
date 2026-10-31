@@ -1,7 +1,5 @@
 
- // utils/modCore.js - shared tools used by all the moderation commands:
- // case numbers, DMs to the member, mod-log entries, public embeds,
- // confirm buttons and time durations like "30m" or "2h".
+// utils/modCore.js - shared moderation helpers, case storage and message layouts.
 
 const {
   EmbedBuilder,
@@ -15,13 +13,9 @@ const store = require('./store');
 const { sendModLog } = require('./modLog');
 const { clip, tryDM } = require('./checks');
 
-// A reply only the person who typed the command can see.
 const hidden = (content) => ({ content, flags: MessageFlags.Ephemeral });
-
-// Tell Discord "I'm working on it" (only the moderator sees it).
 const defer = (interaction) => interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-// Look and wording for every kind of action.
 const ACTIONS = {
   ban: { label: 'Ban', heading: 'MEMBER BANNED', emoji: '🔨', color: 0xed4245, past: 'was banned' },
   unban: { label: 'Unban', heading: 'BAN REMOVED', emoji: '🔓', color: 0x57f287, past: 'was unbanned' },
@@ -32,11 +26,8 @@ const ACTIONS = {
   clearwarns: { label: 'Warnings Cleared', heading: 'WARNINGS CLEARED', emoji: '🧹', color: 0x57f287, past: 'had their warnings cleared' },
 };
 
-// ---------- durations ----------
-
 const UNITS = { s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000 };
 
-// "30m" -> milliseconds. "1h30m" works too. A plain number means minutes.
 function parseDuration(text) {
   const cleaned = String(text).toLowerCase().replace(/\s+/g, '');
   if (/^\d+$/.test(cleaned)) return Number(cleaned) * UNITS.m;
@@ -49,7 +40,6 @@ function parseDuration(text) {
   return total;
 }
 
-// milliseconds -> "1d 2h 5m"
 function formatDuration(ms) {
   let left = Math.round(ms / 1000);
   const parts = [];
@@ -63,9 +53,6 @@ function formatDuration(ms) {
   return parts.join(' ') || '0s';
 }
 
-// ---------- cases ----------
-
-// Saves a numbered case in data/cases.json and returns its number.
 function createCase(guildId, entry) {
   const all = store.read('cases', {});
   all[guildId] ??= { next: 1, list: [] };
@@ -79,34 +66,54 @@ function getCases(guildId) {
   return store.read('cases', {})[guildId]?.list ?? [];
 }
 
-// ---------- messages ----------
+// Build a consistent emoji-based breakdown of the action.
+function buildDetailLines(type, fields, dmSent) {
+  const icons = {
+    Duration: '⏱️',
+    'Messages deleted': '🗑️',
+    'Total warnings': '📊',
+    'Warnings removed': '🧹',
+  };
 
-// The compact public embed everyone in the channel sees.
-function caseEmbed(type, number, user, moderator, reason, fields = []) {
+  const lines = fields.map((field) => {
+    const name = String(field.name || 'Detail');
+    const value = String(field.value ?? 'Not specified');
+    const icon = icons[name] || '📌';
+    return `${icon} **${name}:** ${value}`;
+  });
+
+  // Only show DM status when delivery was actually attempted.
+  if (dmSent === true) lines.push('✉️ **DM notification:** 🟩 Delivered');
+  if (dmSent === false) lines.push('✉️ **DM notification:** 🟥 Could not deliver');
+
+  if (type === 'ban' && !fields.some((field) => field.name === 'Messages deleted')) {
+    lines.push('🗑️ **Message deletion:** ⬜ Not specified');
+  }
+
+  return lines;
+}
+
+function caseEmbed(type, number, user, moderator, reason, fields = [], dmSent) {
   const action = ACTIONS[type] || ACTIONS.warn;
-  const embed = new EmbedBuilder()
+  const detailLines = buildDetailLines(type, fields, dmSent);
+
+  const description = [
+    `👤 **Member:** ${user}`,
+    `🛡️ **Moderator:** ${moderator}`,
+    ...detailLines,
+    `📝 **Reason:** ${clip(reason || 'No reason provided', 900)}`,
+  ].join('\n');
+
+  return new EmbedBuilder()
     .setColor(action.color)
     .setAuthor({ name: 'MF BOT • MODERATION CASE', iconURL: moderator.displayAvatarURL() })
     .setTitle(`${action.emoji} ${action.heading}`)
-    .setDescription(`**${user.tag}** ${action.past}.`)
+    .setDescription(description.slice(0, 4000))
     .setThumbnail(user.displayAvatarURL())
-    .addFields(
-      { name: 'MEMBER', value: `${user}`, inline: true },
-      { name: 'MODERATOR', value: `${moderator}`, inline: true },
-      ...fields.map((field) => ({
-        name: String(field.name).toUpperCase().slice(0, 256),
-        value: String(field.value || 'Not specified').slice(0, 1024),
-        inline: true,
-      })),
-      { name: 'REASON', value: clip(reason || 'No reason provided', 1024), inline: false }
-    )
     .setFooter({ text: `CASE #${number} • MF Bot Moderation` })
     .setTimestamp();
-
-  return embed;
 }
 
-// Sends a private message to the member. Returns true if it was delivered.
 async function notifyUser(guild, user, type, reason, lines = []) {
   const action = ACTIONS[type] || ACTIONS.warn;
   const embed = new EmbedBuilder()
@@ -114,7 +121,7 @@ async function notifyUser(guild, user, type, reason, lines = []) {
     .setAuthor({ name: `${guild.name} • MODERATION NOTICE` })
     .setTitle(`${action.emoji} ${action.heading}`)
     .setDescription(
-      [`A moderation action has been taken against you in **${guild.name}**.`, ...lines, `**Reason:** ${clip(reason || 'No reason provided', 1000)}`].join('\n')
+      [`A moderation action has been taken against you in **${guild.name}**.`, ...lines, `📝 **Reason:** ${clip(reason || 'No reason provided', 1000)}`].join('\n')
     )
     .setFooter({ text: 'MF Bot Moderation' })
     .setTimestamp();
@@ -122,8 +129,6 @@ async function notifyUser(guild, user, type, reason, lines = []) {
   return tryDM(user, { embeds: [embed] });
 }
 
-// Does everything that should happen AFTER an action worked:
-// saves the case, writes the mod log, tells the moderator, posts the public embed.
 async function recordAction(interaction, { type, user, reason, fields = [], dmSent }) {
   const number = createCase(interaction.guildId, {
     type,
@@ -136,15 +141,19 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
   });
 
   const action = ACTIONS[type] || ACTIONS.warn;
+  const detailLines = buildDetailLines(type, fields, dmSent);
+
+  const logDescription = [
+    `👤 **Member:** ${user.tag}`,
+    `🛡️ **Moderator:** ${interaction.user.tag}`,
+    ...detailLines,
+    `📝 **Reason:** ${clip(reason || 'No reason provided', 900)}`,
+  ].join('\n');
+
   await sendModLog(interaction.guild, {
     title: `${action.emoji} ${action.heading} • CASE #${number}`,
     color: action.color,
-    description: [
-      `**Member:** ${user.tag}`,
-      `**Moderator:** ${interaction.user.tag}`,
-      ...fields.map((field) => `**${field.name}:** ${field.value}`),
-      `**Reason:** ${reason || 'No reason provided'}`,
-    ].join('\n'),
+    description: logDescription.slice(0, 4000),
     footer: `Case #${number} • ${interaction.guild.name}`,
   });
 
@@ -155,7 +164,8 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
 
   try {
     await interaction.followUp({
-      embeds: [caseEmbed(type, number, user, interaction.user, reason, fields)],
+      embeds: [caseEmbed(type, number, user, interaction.user, reason, fields, dmSent)],
+      allowedMentions: { parse: [] },
     });
   } catch (error) {
     console.error('Could not post the public embed:', error.message);
@@ -164,10 +174,6 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
   return number;
 }
 
-// ---------- confirm buttons ----------
-
-// Shows "Confirm / Cancel" buttons. Returns true only if the moderator confirms.
-// After this, answer with interaction.editReply (the reply already exists).
 async function confirm(interaction, question) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
