@@ -2,7 +2,7 @@
 
 // MF Bot — central bot entry point.
 // Loads commands and events, registers slash commands, and routes Discord
-// interactions through one handler.
+// interactions through one central handler.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -90,6 +90,10 @@ function errorMessage(error, fallback = 'Something went wrong. Please try again.
 
 client.commands = new Collection();
 
+// Interaction event modules are collected here and called by the central
+// InteractionCreate listener below.
+const interactionHandlers = [];
+
 function loadFolder(folder, handleItem) {
   const directory = path.join(__dirname, folder);
 
@@ -108,7 +112,6 @@ function loadFolder(folder, handleItem) {
     const fullPath = path.join(directory, file);
 
     try {
-      // Clear the cached module before loading it during a fresh startup.
       delete require.cache[require.resolve(fullPath)];
 
       const exported = require(fullPath);
@@ -157,6 +160,13 @@ const eventCount = loadFolder('events', (event, file) => {
     return false;
   }
 
+  // InteractionCreate events are not registered separately.
+  // They are dispatched by the single central handler.
+  if (event.name === Events.InteractionCreate) {
+    interactionHandlers.push({ event, file });
+    return true;
+  }
+
   const listener = async (...args) => {
     try {
       await event.execute(...args);
@@ -174,7 +184,9 @@ const eventCount = loadFolder('events', (event, file) => {
   return true;
 });
 
-logInfo(`Loaded ${commandCount} command(s) and ${eventCount} event(s).`);
+logInfo(
+  `Loaded ${commandCount} command(s), ${eventCount} event(s), and ${interactionHandlers.length} interaction handler(s).`
+);
 
 // -----------------------------------------------------------------------------
 // Safe interaction replies
@@ -218,7 +230,6 @@ async function deferPrivate(interaction) {
 function isApplicationReviewer(member, form) {
   if (!member || !form) return false;
 
-  // Server administrators and members with Manage Server can review forms.
   if (
     member.permissions.has(PermissionFlagsBits.Administrator) ||
     member.permissions.has(PermissionFlagsBits.ManageGuild)
@@ -226,7 +237,6 @@ function isApplicationReviewer(member, form) {
     return true;
   }
 
-  // Otherwise, the form can specify reviewer roles.
   const reviewerRoleIds = Array.isArray(form.reviewerRoleIds)
     ? form.reviewerRoleIds
     : [];
@@ -332,7 +342,6 @@ async function handleApplicationSubmit(interaction) {
     return replyPrivate(interaction, 'This application form has been closed.');
   }
 
-  // Acknowledge quickly so Discord does not time out the interaction.
   await deferPrivate(interaction);
 
   try {
@@ -469,7 +478,6 @@ async function handleApplicationReview(interaction) {
       logWarn(`Could not update reviewed application message: ${error.message}`);
     });
 
-    // Notify the applicant privately when possible.
     const applicant = await client.users
       .fetch(reviewed.userId)
       .catch(() => null);
@@ -500,7 +508,7 @@ async function handleApplicationReview(interaction) {
 }
 
 // -----------------------------------------------------------------------------
-// Slash commands, buttons, modals and future interaction types
+// Slash commands
 // -----------------------------------------------------------------------------
 
 const TARGETING_COMMANDS = new Set([
@@ -542,50 +550,91 @@ async function handleChatCommand(interaction) {
   }
 }
 
-async function handleButton(interaction) {
-  const id = interaction.customId;
+// -----------------------------------------------------------------------------
+// Application interaction routing
+// -----------------------------------------------------------------------------
 
-  if (id.startsWith('application_apply:')) {
-    return handleApplicationButton(interaction);
+async function handleApplicationInteraction(interaction) {
+  if (
+    interaction.isButton() &&
+    interaction.customId.startsWith('application_apply:')
+  ) {
+    await handleApplicationButton(interaction);
+    return true;
   }
 
-  if (id.startsWith('application_review:')) {
-    return handleApplicationReview(interaction);
+  if (
+    interaction.isButton() &&
+    interaction.customId.startsWith('application_review:')
+  ) {
+    await handleApplicationReview(interaction);
+    return true;
   }
 
-  // Let feature-specific event handlers process their own buttons.
-  return;
+  if (
+    interaction.isModalSubmit() &&
+    interaction.customId.startsWith('application_submit:')
+  ) {
+    await handleApplicationSubmit(interaction);
+    return true;
+  }
+
+  return false;
 }
 
-async function handleModal(interaction) {
-  if (interaction.customId.startsWith('application_submit:')) {
-    return handleApplicationSubmit(interaction);
-  }
-
-  // Let feature-specific event handlers process their own modal submissions.
-  return;
-}
+// -----------------------------------------------------------------------------
+// Central interaction dispatcher
+// -----------------------------------------------------------------------------
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    // Slash commands are handled centrally.
     if (interaction.isChatInputCommand()) {
-      return await handleChatCommand(interaction);
+      await handleChatCommand(interaction);
+      return;
     }
 
-    if (interaction.isButton()) {
-      return await handleButton(interaction);
+    // Application buttons and forms are handled here first.
+    if (await handleApplicationInteraction(interaction)) {
+      return;
     }
 
-    if (interaction.isModalSubmit()) {
-      return await handleModal(interaction);
-    }
+    // All other feature-specific interactions are passed to their own
+    // existing handler modules, without registering separate listeners.
+    for (const { event, file } of interactionHandlers) {
+      // Once an interaction has been acknowledged, no other handler should
+      // attempt to reply to it.
+      if (interaction.replied || interaction.deferred) {
+        break;
+      }
 
-    // Add select menus, context menus and autocomplete handlers here as features
-    // are introduced. Unhandled interaction types are intentionally ignored.
+      try {
+        await event.execute(interaction);
+      } catch (error) {
+        logError(`Interaction handler in ${file} failed.`, error);
+
+        if (
+          interaction.isRepliable() &&
+          !interaction.replied &&
+          !interaction.deferred
+        ) {
+          await replyPrivate(
+            interaction,
+            'Something went wrong processing that interaction.'
+          );
+        }
+
+        break;
+      }
+    }
   } catch (error) {
-    logError('Unhandled interaction error.', error);
+    logError('Central interaction handler failed.', error);
 
-    if (interaction.isRepliable()) {
+    if (
+      interaction.isRepliable() &&
+      !interaction.replied &&
+      !interaction.deferred
+    ) {
       await replyPrivate(
         interaction,
         'Something went wrong processing that interaction.'
@@ -638,7 +687,6 @@ process.on('unhandledRejection', (error) => {
 });
 
 process.on('uncaughtException', (error) => {
-  // Log the error. Do not silently continue after an unknown fatal exception.
   logError('Uncaught exception. The process may be in an unsafe state.', error);
   process.exit(1);
 });
