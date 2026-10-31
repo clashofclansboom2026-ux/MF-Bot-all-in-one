@@ -1,3 +1,4 @@
+
 // utils/modCore.js - shared tools used by all the moderation commands:
 // case numbers, DMs to the member, mod-log entries, public embeds,
 // confirm buttons and time durations like "30m" or "2h".
@@ -22,13 +23,13 @@ const defer = (interaction) => interaction.deferReply({ flags: MessageFlags.Ephe
 
 // Look and wording for every kind of action.
 const ACTIONS = {
-  ban: { label: 'Ban', emoji: '🔨', color: 0xed4245, past: 'was banned' },
-  unban: { label: 'Unban', emoji: '🔓', color: 0x57f287, past: 'was unbanned' },
-  kick: { label: 'Kick', emoji: '👢', color: 0xe67e22, past: 'was kicked' },
-  timeout: { label: 'Timeout', emoji: '⏳', color: 0xfee75c, past: 'was timed out' },
-  untimeout: { label: 'Timeout Removed', emoji: '🔊', color: 0x57f287, past: 'had their timeout removed' },
-  warn: { label: 'Warning', emoji: '⚠️', color: 0xfee75c, past: 'was warned' },
-  clearwarns: { label: 'Warnings Cleared', emoji: '🧹', color: 0x57f287, past: 'had their warnings cleared' },
+  ban: { label: 'Ban', heading: 'MEMBER BANNED', emoji: '🔨', color: 0xed4245, past: 'was banned' },
+  unban: { label: 'Unban', heading: 'BAN REMOVED', emoji: '🔓', color: 0x57f287, past: 'was unbanned' },
+  kick: { label: 'Kick', heading: 'MEMBER KICKED', emoji: '👢', color: 0xe67e22, past: 'was kicked' },
+  timeout: { label: 'Timeout', heading: 'MEMBER TIMED OUT', emoji: '⏳', color: 0xfee75c, past: 'was timed out' },
+  untimeout: { label: 'Timeout Removed', heading: 'TIMEOUT REMOVED', emoji: '🔊', color: 0x57f287, past: 'had their timeout removed' },
+  warn: { label: 'Warning', heading: 'MEMBER WARNED', emoji: '⚠️', color: 0xfee75c, past: 'was warned' },
+  clearwarns: { label: 'Warnings Cleared', heading: 'WARNINGS CLEARED', emoji: '🧹', color: 0x57f287, past: 'had their warnings cleared' },
 };
 
 // ---------- durations ----------
@@ -82,30 +83,40 @@ function getCases(guildId) {
 
 // The public embed everyone in the channel sees.
 function caseEmbed(type, number, user, moderator, reason, fields = []) {
-  const action = ACTIONS[type];
-  return new EmbedBuilder()
+  const action = ACTIONS[type] || ACTIONS.warn;
+  const embed = new EmbedBuilder()
     .setColor(action.color)
-    .setAuthor({ name: `${action.emoji} ${action.label}` })
-    .setDescription(`**${user.tag}** ${action.past}.`)
+    .setAuthor({ name: 'MF BOT  •  MODERATION CASE', iconURL: moderator.displayAvatarURL() })
+    .setTitle(`${action.emoji}  ${action.heading}`)
+    .setDescription(`**${user.tag}** ${action.past}.\n\nA moderation action has been recorded for this member.`)
     .setThumbnail(user.displayAvatarURL())
     .addFields(
-      { name: 'Moderator', value: `${moderator}`, inline: true },
-      ...fields.map((f) => ({ name: f.name, value: String(f.value), inline: true })),
-      { name: 'Reason', value: clip(reason, 1024) }
+      { name: 'MEMBER', value: `${user}\n\`${user.id}\``, inline: true },
+      { name: 'MODERATOR', value: `${moderator}\n\`${moderator.id}\``, inline: true },
+      ...fields.map((field) => ({
+        name: String(field.name).toUpperCase().slice(0, 256),
+        value: String(field.value || 'Not specified').slice(0, 1024),
+        inline: true,
+      })),
+      { name: 'REASON', value: clip(reason || 'No reason provided', 1024), inline: false }
     )
-    .setFooter({ text: `Case #${number} • User ID: ${user.id}` })
+    .setFooter({ text: `CASE #${number}  •  MF Bot Moderation` })
     .setTimestamp();
+
+  return embed;
 }
 
 // Sends a private message to the member. Returns true if it was delivered.
 async function notifyUser(guild, user, type, reason, lines = []) {
-  const action = ACTIONS[type];
+  const action = ACTIONS[type] || ACTIONS.warn;
   const embed = new EmbedBuilder()
     .setColor(action.color)
-    .setTitle(`${action.emoji} ${action.label}`)
+    .setAuthor({ name: `${guild.name}  •  MODERATION NOTICE` })
+    .setTitle(`${action.emoji}  ${action.heading}`)
     .setDescription(
-      [`**Server:** ${guild.name}`, ...lines, `**Reason:** ${clip(reason, 1000)}`].join('\n')
+      [`A moderation action has been taken against you in **${guild.name}**.`, ...lines, `**Reason**\n${clip(reason || 'No reason provided', 1000)}`].join('\n\n')
     )
+    .setFooter({ text: 'MF Bot Moderation' })
     .setTimestamp();
   return tryDM(user, { embeds: [embed] });
 }
@@ -120,19 +131,20 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
     modId: interaction.user.id,
     modTag: interaction.user.tag,
     reason,
-    extra: fields.map((f) => `${f.name}: ${f.value}`).join(' | '),
+    extra: fields.map((field) => `${field.name}: ${field.value}`).join(' | '),
   });
 
-  const action = ACTIONS[type];
+  const action = ACTIONS[type] || ACTIONS.warn;
   await sendModLog(interaction.guild, {
-    title: `${action.emoji} ${action.label} | Case #${number}`,
+    title: `${action.emoji}  ${action.heading}  •  CASE #${number}`,
     color: action.color,
     description: [
-      `**Member:** ${user.tag} (${user.id})`,
-      `**Moderator:** ${interaction.user.tag} (${interaction.user.id})`,
-      ...fields.map((f) => `**${f.name}:** ${f.value}`),
-      `**Reason:** ${reason}`,
-    ].join('\n'),
+      `**Member**\n${user.tag} (\`${user.id}\`)`,
+      `**Moderator**\n${interaction.user.tag} (\`${interaction.user.id}\`)`,
+      ...fields.map((field) => `**${field.name}**\n${field.value}`),
+      `**Reason**\n${reason || 'No reason provided'}`,
+    ].join('\n\n'),
+    footer: `Case #${number} • ${interaction.guild.name}`,
   });
 
   let note = `✅ Done. Case #${number} created.`;
