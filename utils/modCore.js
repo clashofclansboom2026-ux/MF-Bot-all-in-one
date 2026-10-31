@@ -43,6 +43,7 @@ function parseDuration(text) {
 function formatDuration(ms) {
   let left = Math.round(ms / 1000);
   const parts = [];
+
   for (const [name, seconds] of [['d', 86400], ['h', 3600], ['m', 60], ['s', 1]]) {
     const amount = Math.floor(left / seconds);
     if (amount) {
@@ -50,15 +51,18 @@ function formatDuration(ms) {
       left -= amount * seconds;
     }
   }
+
   return parts.join(' ') || '0s';
 }
 
 function createCase(guildId, entry) {
   const all = store.read('cases', {});
   all[guildId] ??= { next: 1, list: [] };
+
   const number = all[guildId].next++;
   all[guildId].list.push({ number, at: Date.now(), ...entry });
   store.write('cases', all);
+
   return number;
 }
 
@@ -66,28 +70,38 @@ function getCases(guildId) {
   return store.read('cases', {})[guildId]?.list ?? [];
 }
 
-// Build a consistent emoji-based breakdown of the action.
+// Format only the options relevant to the moderation action.
 function buildDetailLines(type, fields, dmSent) {
-  const icons = {
-    Duration: '⏱️',
-    'Messages deleted': '🗑️',
-    'Total warnings': '📊',
-    'Warnings removed': '🧹',
-  };
+  const lines = [];
 
-  const lines = fields.map((field) => {
+  for (const field of fields) {
     const name = String(field.name || 'Detail');
     const value = String(field.value ?? 'Not specified');
-    const icon = icons[name] || '📌';
-    return `${icon} **${name}:** ${value}`;
-  });
 
-  // Only show DM status when delivery was actually attempted.
-  if (dmSent === true) lines.push('✉️ **DM notification:** 🟩 Delivered');
-  if (dmSent === false) lines.push('✉️ **DM notification:** 🟥 Could not deliver');
+    if (name === 'Duration') {
+      lines.push(`⏱️ **Duration:** \`${value}\``);
+    } else if (name === 'Messages deleted') {
+      const days = Number.parseInt(value, 10) || 0;
 
-  if (type === 'ban' && !fields.some((field) => field.name === 'Messages deleted')) {
-    lines.push('🗑️ **Message deletion:** ⬜ Not specified');
+      lines.push(
+        days > 0
+          ? `🗑️ **Message history:** 🟩 ${days} day(s) deleted`
+          : '🗑️ **Message history:** 🟥 Not deleted'
+      );
+    } else if (name === 'Total warnings') {
+      lines.push(`📊 **Total warnings:** ${value}`);
+    } else if (name === 'Warnings removed') {
+      lines.push(`🧹 **Warnings removed:** 🟩 ${value}`);
+    } else {
+      lines.push(`📌 **${clip(name, 80)}:** ${clip(value, 500)}`);
+    }
+  }
+
+  // DM status is shown only when a DM attempt was actually made.
+  if (dmSent === true) {
+    lines.push('✉️ **DM notification:** 🟩 Delivered');
+  } else if (dmSent === false) {
+    lines.push('✉️ **DM notification:** 🟥 Failed to deliver');
   }
 
   return lines;
@@ -95,18 +109,21 @@ function buildDetailLines(type, fields, dmSent) {
 
 function caseEmbed(type, number, user, moderator, reason, fields = [], dmSent) {
   const action = ACTIONS[type] || ACTIONS.warn;
-  const detailLines = buildDetailLines(type, fields, dmSent);
 
   const description = [
+    `🟩 **Action:** Successfully completed`,
     `👤 **Member:** ${user}`,
     `🛡️ **Moderator:** ${moderator}`,
-    ...detailLines,
+    ...buildDetailLines(type, fields, dmSent),
     `📝 **Reason:** ${clip(reason || 'No reason provided', 900)}`,
   ].join('\n');
 
   return new EmbedBuilder()
     .setColor(action.color)
-    .setAuthor({ name: 'MF BOT • MODERATION CASE', iconURL: moderator.displayAvatarURL() })
+    .setAuthor({
+      name: 'MF BOT • MODERATION CASE',
+      iconURL: moderator.displayAvatarURL(),
+    })
     .setTitle(`${action.emoji} ${action.heading}`)
     .setDescription(description.slice(0, 4000))
     .setThumbnail(user.displayAvatarURL())
@@ -116,13 +133,16 @@ function caseEmbed(type, number, user, moderator, reason, fields = [], dmSent) {
 
 async function notifyUser(guild, user, type, reason, lines = []) {
   const action = ACTIONS[type] || ACTIONS.warn;
+
   const embed = new EmbedBuilder()
     .setColor(action.color)
     .setAuthor({ name: `${guild.name} • MODERATION NOTICE` })
     .setTitle(`${action.emoji} ${action.heading}`)
-    .setDescription(
-      [`A moderation action has been taken against you in **${guild.name}**.`, ...lines, `📝 **Reason:** ${clip(reason || 'No reason provided', 1000)}`].join('\n')
-    )
+    .setDescription([
+      `A moderation action has been taken against you in **${guild.name}**.`,
+      ...lines,
+      `📝 **Reason:** ${clip(reason || 'No reason provided', 1000)}`,
+    ].join('\n'))
     .setFooter({ text: 'MF Bot Moderation' })
     .setTimestamp();
 
@@ -141,12 +161,12 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
   });
 
   const action = ACTIONS[type] || ACTIONS.warn;
-  const detailLines = buildDetailLines(type, fields, dmSent);
 
   const logDescription = [
+    '🟩 **Action:** Successfully completed',
     `👤 **Member:** ${user.tag}`,
     `🛡️ **Moderator:** ${interaction.user.tag}`,
-    ...detailLines,
+    ...buildDetailLines(type, fields, dmSent),
     `📝 **Reason:** ${clip(reason || 'No reason provided', 900)}`,
   ].join('\n');
 
@@ -158,13 +178,20 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
   });
 
   let note = `✅ Done. Case #${number} created.`;
-  if (dmSent === true) note += '\nI sent them a DM.';
-  if (dmSent === false) note += "\nI couldn't DM them (their DMs may be closed).";
+
+  if (dmSent === true) {
+    note += '\nI sent them a DM.';
+  } else if (dmSent === false) {
+    note += "\nI couldn't DM them (their DMs may be closed).";
+  }
+
   await interaction.editReply({ content: note, components: [] });
 
   try {
     await interaction.followUp({
-      embeds: [caseEmbed(type, number, user, interaction.user, reason, fields, dmSent)],
+      embeds: [
+        caseEmbed(type, number, user, interaction.user, reason, fields, dmSent),
+      ],
       allowedMentions: { parse: [] },
     });
   } catch (error) {
@@ -191,6 +218,7 @@ async function confirm(interaction, question) {
     components: [row],
     flags: MessageFlags.Ephemeral,
   });
+
   const message = await interaction.fetchReply();
 
   try {
@@ -203,12 +231,21 @@ async function confirm(interaction, question) {
       await click.update({ content: 'Working on it...', components: [] });
       return true;
     }
-    await click.update({ content: 'Cancelled. Nothing was done.', components: [] });
+
+    await click.update({
+      content: 'Cancelled. Nothing was done.',
+      components: [],
+    });
+
     return false;
   } catch {
     await interaction
-      .editReply({ content: 'Timed out. Nothing was done.', components: [] })
+      .editReply({
+        content: 'Timed out. Nothing was done.',
+        components: [],
+      })
       .catch(() => {});
+
     return false;
   }
 }
