@@ -1,7 +1,7 @@
 
-// utils/modCore.js - shared tools used by all the moderation commands:
-// case numbers, DMs to the member, mod-log entries, public embeds,
-// confirm buttons and time durations like "30m" or "2h".
+ // utils/modCore.js - shared tools used by all the moderation commands:
+ // case numbers, DMs to the member, mod-log entries, public embeds,
+ // confirm buttons and time durations like "30m" or "2h".
 
 const {
   EmbedBuilder,
@@ -81,18 +81,18 @@ function getCases(guildId) {
 
 // ---------- messages ----------
 
-// The public embed everyone in the channel sees.
+// The compact public embed everyone in the channel sees.
 function caseEmbed(type, number, user, moderator, reason, fields = []) {
   const action = ACTIONS[type] || ACTIONS.warn;
   const embed = new EmbedBuilder()
     .setColor(action.color)
-    .setAuthor({ name: 'MF BOT  •  MODERATION CASE', iconURL: moderator.displayAvatarURL() })
-    .setTitle(`${action.emoji}  ${action.heading}`)
-    .setDescription(`**${user.tag}** ${action.past}.\n\nA moderation action has been recorded for this member.`)
+    .setAuthor({ name: 'MF BOT • MODERATION CASE', iconURL: moderator.displayAvatarURL() })
+    .setTitle(`${action.emoji} ${action.heading}`)
+    .setDescription(`**${user.tag}** ${action.past}.`)
     .setThumbnail(user.displayAvatarURL())
     .addFields(
-      { name: 'MEMBER', value: `${user}\n\`${user.id}\``, inline: true },
-      { name: 'MODERATOR', value: `${moderator}\n\`${moderator.id}\``, inline: true },
+      { name: 'MEMBER', value: `${user}`, inline: true },
+      { name: 'MODERATOR', value: `${moderator}`, inline: true },
       ...fields.map((field) => ({
         name: String(field.name).toUpperCase().slice(0, 256),
         value: String(field.value || 'Not specified').slice(0, 1024),
@@ -100,7 +100,7 @@ function caseEmbed(type, number, user, moderator, reason, fields = []) {
       })),
       { name: 'REASON', value: clip(reason || 'No reason provided', 1024), inline: false }
     )
-    .setFooter({ text: `CASE #${number}  •  MF Bot Moderation` })
+    .setFooter({ text: `CASE #${number} • MF Bot Moderation` })
     .setTimestamp();
 
   return embed;
@@ -111,13 +111,14 @@ async function notifyUser(guild, user, type, reason, lines = []) {
   const action = ACTIONS[type] || ACTIONS.warn;
   const embed = new EmbedBuilder()
     .setColor(action.color)
-    .setAuthor({ name: `${guild.name}  •  MODERATION NOTICE` })
-    .setTitle(`${action.emoji}  ${action.heading}`)
+    .setAuthor({ name: `${guild.name} • MODERATION NOTICE` })
+    .setTitle(`${action.emoji} ${action.heading}`)
     .setDescription(
-      [`A moderation action has been taken against you in **${guild.name}**.`, ...lines, `**Reason**\n${clip(reason || 'No reason provided', 1000)}`].join('\n\n')
+      [`A moderation action has been taken against you in **${guild.name}**.`, ...lines, `**Reason:** ${clip(reason || 'No reason provided', 1000)}`].join('\n')
     )
     .setFooter({ text: 'MF Bot Moderation' })
     .setTimestamp();
+
   return tryDM(user, { embeds: [embed] });
 }
 
@@ -136,14 +137,14 @@ async function recordAction(interaction, { type, user, reason, fields = [], dmSe
 
   const action = ACTIONS[type] || ACTIONS.warn;
   await sendModLog(interaction.guild, {
-    title: `${action.emoji}  ${action.heading}  •  CASE #${number}`,
+    title: `${action.emoji} ${action.heading} • CASE #${number}`,
     color: action.color,
     description: [
-      `**Member**\n${user.tag} (\`${user.id}\`)`,
-      `**Moderator**\n${interaction.user.tag} (\`${interaction.user.id}\`)`,
-      ...fields.map((field) => `**${field.name}**\n${field.value}`),
-      `**Reason**\n${reason || 'No reason provided'}`,
-    ].join('\n\n'),
+      `**Member:** ${user.tag}`,
+      `**Moderator:** ${interaction.user.tag}`,
+      ...fields.map((field) => `**${field.name}:** ${field.value}`),
+      `**Reason:** ${reason || 'No reason provided'}`,
+    ].join('\n'),
     footer: `Case #${number} • ${interaction.guild.name}`,
   });
 
