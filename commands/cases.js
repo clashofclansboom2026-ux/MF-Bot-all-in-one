@@ -48,43 +48,59 @@ const caseCommand = {
 
     const action = ACTIONS[found.type] ?? {
       label: found.type || 'Unknown action',
+      heading: 'MODERATION ACTION',
       emoji: '📄',
       color: 0x5865f2,
     };
 
-    const embed = new EmbedBuilder()
-      .setColor(action.color)
-      .setTitle(`${action.emoji} Case #${found.number} | ${action.label}`)
-      .addFields(
-        {
-          name: 'Member',
-          value: clip(found.userTag || 'Unknown member', 256),
-          inline: true,
-        },
-        {
-          name: 'Moderator',
-          value: clip(found.modTag || 'Unknown moderator', 256),
-          inline: true,
-        },
-        {
-          name: 'When',
-          value: `<t:${stamp(found.at)}:F>`,
-          inline: true,
-        },
-        {
-          name: 'Reason',
-          value: clip(found.reason || 'No reason provided', 1024),
-          inline: false,
-        }
-      );
+    const memberUser = await interaction.client.users
+      .fetch(found.userId)
+      .catch(() => null);
+
+    const details = [
+      '🟩 **Action:** Successfully completed',
+      `👤 **Member:** ${clip(found.userTag || 'Unknown member', 100)}`,
+      `🛡️ **Moderator:** ${clip(found.modTag || 'Unknown moderator', 100)}`,
+    ];
 
     if (found.extra) {
-      embed.addFields({
-        name: 'Additional details',
-        value: clip(found.extra, 1024),
-        inline: false,
-      });
+      for (const item of String(found.extra).split(' | ')) {
+        const separator = item.indexOf(':');
+
+        if (separator === -1) {
+          details.push(`📌 **Details:** ${clip(item, 300)}`);
+          continue;
+        }
+
+        const name = item.slice(0, separator).trim();
+        const value = item.slice(separator + 1).trim();
+
+        const emoji = name === 'Duration' ? '⏱️'
+          : name === 'Messages deleted' ? '🗑️'
+          : name === 'Total warnings' ? '📊'
+          : name === 'Warnings removed' ? '🧹'
+          : '📌';
+
+        details.push(`${emoji} **${clip(name, 80)}:** ${clip(value, 300)}`);
+      }
     }
+
+    details.push(`📝 **Reason:** ${clip(found.reason || 'No reason provided', 900)}`);
+
+    const embed = new EmbedBuilder()
+      .setColor(action.color)
+      .setAuthor({
+        name: 'MF BOT • MODERATION CASE',
+        iconURL: interaction.client.user.displayAvatarURL(),
+      })
+      .setTitle(`${action.emoji} ${action.heading || action.label.toUpperCase()}`)
+      .setDescription(details.join('\n'))
+      .setThumbnail(
+        memberUser?.displayAvatarURL() ||
+        interaction.client.user.displayAvatarURL()
+      )
+      .setFooter({ text: `CASE #${found.number} • MF Bot Moderation` })
+      .setTimestamp(found.at ? new Date(found.at) : new Date());
 
     await interaction.reply({
       embeds: [embed],
@@ -139,58 +155,57 @@ const history = {
       const reason = clip(entry.reason || 'No reason provided', 90);
       const moderator = clip(entry.modTag || 'Unknown moderator', 40);
 
-      return [
-        `**#${entry.number}** ${action.emoji} **${action.label}**`,
-        `└ ${reason} • By ${moderator} • <t:${stamp(entry.at)}:R>`,
-      ].join('\n');
+      return `**#${entry.number}** ${action.emoji} **${action.label}**\n└ 📝 ${reason} • 🛡️ ${moderator} • <t:${stamp(entry.at)}:R>`;
     });
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setAuthor({
-        name: user.tag,
-        iconURL: user.displayAvatarURL(),
+        name: 'MF BOT • MODERATION HISTORY',
+        iconURL: interaction.client.user.displayAvatarURL(),
       })
-      .setTitle(`Moderation history • ${list.length} case${list.length === 1 ? '' : 's'}`)
+      .setTitle(`📋 ${user.tag}`)
+      .setThumbnail(user.displayAvatarURL())
       .addFields(
         {
           name: '⚠️ Warnings',
-          value: String(count('warn')),
+          value: `🟨 **${count('warn')}**`,
           inline: true,
         },
         {
           name: '🔨 Bans',
-          value: String(count('ban')),
+          value: `🟥 **${count('ban')}**`,
           inline: true,
         },
         {
           name: '👢 Kicks',
-          value: String(count('kick')),
+          value: `🟧 **${count('kick')}**`,
           inline: true,
         },
         {
           name: '⏳ Timeouts',
-          value: String(count('timeout')),
+          value: `🟨 **${count('timeout')}**`,
           inline: true,
         },
         {
           name: '🔊 Timeouts removed',
-          value: String(count('untimeout')),
+          value: `🟩 **${count('untimeout')}**`,
           inline: true,
         },
         {
           name: '🔓 Bans removed',
-          value: String(count('unban')),
+          value: `🟩 **${count('unban')}**`,
           inline: true,
         }
       )
-      .setDescription(`**Recent actions**\n\n${lines.join('\n\n')}`)
+      .setDescription(`**📜 Recent actions**\n\n${lines.join('\n\n')}`)
       .setFooter({
         text:
           list.length > 10
-            ? 'Showing the latest 10 • Use /case to view a full case'
-            : 'Use /case to view a full case',
-      });
+            ? `SHOWING LATEST 10 • ${list.length} TOTAL CASES • USE /CASE FOR DETAILS`
+            : `${list.length} TOTAL CASE${list.length === 1 ? '' : 'S'} • USE /CASE FOR DETAILS`,
+      })
+      .setTimestamp();
 
     await interaction.reply({
       embeds: [embed],
