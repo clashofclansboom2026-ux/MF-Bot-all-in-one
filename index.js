@@ -657,17 +657,39 @@ client.once(Events.ClientReady, async (readyClient) => {
       : command.data
   );
 
-  try {
-    if (process.env.GUILD_ID) {
-      const guild = await readyClient.guilds.fetch(process.env.GUILD_ID);
-      await guild.commands.set(commandData);
-      logInfo(`Registered commands in test guild ${guild.name}.`);
-    } else {
-      await readyClient.application.commands.set(commandData);
-      logInfo('Registered global slash commands.');
+  // Remove old server-specific commands from the original server.
+  // This does not remove global commands or affect other servers.
+  const oldGuildId = process.env.OLD_GUILD_ID?.trim();
+
+  if (oldGuildId) {
+    try {
+      const oldGuild = await readyClient.guilds.fetch(oldGuildId);
+
+      await oldGuild.commands.set([]);
+
+      logInfo(
+        `Successfully cleared old server-specific commands from "${oldGuild.name}".`
+      );
+    } catch (error) {
+      logError(
+        'Could not clear old server-specific commands. Check OLD_GUILD_ID and the bot’s access to the original server.',
+        error
+      );
     }
+  } else {
+    logWarn(
+      'OLD_GUILD_ID is not configured. Skipping old server command cleanup.'
+    );
+  }
+
+  // Always register commands globally.
+  // This is deliberately separate from cleanup so a cleanup failure
+  // cannot prevent global command registration.
+  try {
+    await readyClient.application.commands.set(commandData);
+    logInfo('Successfully registered global slash commands.');
   } catch (error) {
-    logError('Could not register slash commands.', error);
+    logError('Could not register global slash commands.', error);
   }
 
   try {
